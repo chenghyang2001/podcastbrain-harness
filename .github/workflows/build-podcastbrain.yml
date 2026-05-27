@@ -42,14 +42,49 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Restore Claude OAuth credentials (Max subscription)
-        # ~/.claude/.credentials.json 含 refreshToken，讓 claude CLI 走 Max 訂閱
-        # 而非 API Credits。每次 CI 跑前從 GitHub Secret 還原此檔案。
-        # refreshToken 長效（數個月），access token 由 CLI 自動刷新。
+        # ~/.claude/.credentials.json 含 refreshToken，走 Max 訂閱
         env:
           CLAUDE_CREDENTIALS: ${{ secrets.CLAUDE_CREDENTIALS }}
         run: |
+          # 驗證 secret 有設定
+          if [ -z "$CLAUDE_CREDENTIALS" ]; then
+            echo "::error::CLAUDE_CREDENTIALS secret is empty or not set!"
+            echo "請到 GitHub repo → Settings → Secrets → Actions 設定"
+            echo "值：cat ~/.claude/.credentials.json 的完整輸出"
+            exit 1
+          fi
+
+          # 寫入 credentials 檔案
           mkdir -p ~/.claude
           printf '%s' "$CLAUDE_CREDENTIALS" > ~/.claude/.credentials.json
+
+          # 診斷：確認路徑和內容
+          echo "HOME=$HOME"
+          echo "credentials path: $HOME/.claude/.credentials.json"
+          echo "file size: $(wc -c < "$HOME/.claude/.credentials.json") bytes"
+
+          # 驗證 JSON 格式和 token 狀態
+          python3 - << 'PYEOF'
+import json, os, time
+path = os.path.expanduser('~/.claude/.credentials.json')
+try:
+    data = json.load(open(path))
+except json.JSONDecodeError as e:
+    print(f"::error::CLAUDE_CREDENTIALS is not valid JSON: {e}")
+    exit(1)
+creds = data.get('claudeAiOauth', {})
+if not creds:
+    print(f"::error::Missing 'claudeAiOauth' key. Found keys: {list(data.keys())}")
+    exit(1)
+exp = creds.get('expiresAt', 0)
+now = int(time.time() * 1000)
+print(f"Credentials OK | subscription: {creds.get('subscriptionType')} | rateLimitTier: {creds.get('rateLimitTier')}")
+if exp > now:
+    print(f"Access token valid: True | remaining: {(exp - now)/60000:.1f} min")
+else:
+    print("Access token EXPIRED (will rely on refreshToken)")
+print(f"Has refreshToken: {'refreshToken' in creds}")
+PYEOF
 
       - name: Set up Node.js 20
         uses: actions/setup-node@v4
@@ -149,7 +184,7 @@ jobs:
                   print(f"  - {ft.get('name', ft.get('id', '(unnamed)'))}")
 
           print("======================\n")
-          PYEOF
+PYEOF
           else
             echo "feature_list.json not found — initializer may have failed or project dir is empty."
             echo "Expected path: $FEATURE_FILE"

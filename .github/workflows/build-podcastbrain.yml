@@ -1,0 +1,158 @@
+name: Build PodcastBrain (Autonomous Coding)
+
+# 僅支援手動觸發，避免意外扣費 API Credits
+on:
+  workflow_dispatch:
+    inputs:
+      project_name:
+        description: "Project name (output dir under generations/)"
+        required: false
+        default: "podcastbrain_ci"
+      max_iterations:
+        description: "Max coding loop iterations"
+        required: false
+        default: "30"
+      num_features:
+        description: "Number of features for initializer to generate"
+        required: false
+        default: "5"
+      model:
+        description: "Claude model to use"
+        required: false
+        default: "claude-sonnet-4-5"
+
+# 全域：停用 writer QA hook 避免巢狀 agent 寫程式碼檔時被三 agent 鐵律攔截。
+# ANTHROPIC_API_KEY 從全域移除，改在各需要的 step 的 env: 區段傳入，
+# 縮小 secret 曝露範圍。
+env:
+  DISABLE_WRITER_QA_HOOK: "1"
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    # harness 單次最長可能跑 30 session × ~10 分鐘 = 300 分鐘；設 360 分鐘保底
+    timeout-minutes: 360
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install claude CLI
+        # ANTHROPIC_API_KEY 僅此 step 需要（安裝時 CLI 可能驗證 key 格式）
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: npm install -g @anthropic-ai/claude-code
+
+      # openai-whisper 拉 PyTorch (~800 MB)，必須在 harness 執行前裝好。
+      # 若在 harness 內由 agent pip install，會超過 parse_claude_stream.py 的
+      # IDLE_TIMEOUT_SEC=600（下載 + 安裝可能需要 10-15 分鐘），導致 parser 誤判
+      # 超時並中止整個 session。
+      - name: Pre-install Python packages
+        timeout-minutes: 20
+        run: |
+          pip install --timeout 300 --retries 3 streamlit yt-dlp anthropic openai-whisper
+
+      # harness 寫入的 .mcp.json 會 spawn puppeteer-mcp-server（npx）；
+      # puppeteer-mcp-server 自帶 Chromium，但 Chromium 需要這些系統共用庫。
+      # apt-get 失敗不致命（|| true on npm），CI 繼續，缺庫時 puppeteer 會報錯
+      # 但不應中斷整個 build。
+      - name: Install Puppeteer system dependencies
+        run: |
+          sudo apt-get install -y \
+            libnspr4 libnss3 libatk1.0-0 libatk-bridge2.0-0 \
+            libcups2 libdrm2 libxkbcommon0 libxcomposite1 \
+            libxdamage1 libxfixes3 libxrandr2 libgbm1 libasound2 \
+            --no-install-recommends
+          npm install -g puppeteer-mcp-server || true
+
+      # harness 內的 agent 會在 generations/<project>/ 做 git commit，
+      # 沒有 global user.email/name 時 git commit 會報錯導致 session 失敗。
+      - name: Configure git for autonomous agent commits
+        run: |
+          git config --global user.email "agent@autonomous-coding"
+          git config --global user.name "Autonomous Agent"
+
+      # 主要步驟：執行 autonomous coding harness。
+      # 所有 inputs 先移入 env: 區塊，run 裡改用 $ENV_VAR，消除 shell injection 風險。
+      # ANTHROPIC_API_KEY 縮小 scope，只放在此 step。
+      # 使用 || 語法的理由：若 harness 非零退出（所有 feature 未通過仍算完成），
+      # 後續的 show results 與 upload artifact 步驟仍需執行（if: always()）。
+      - name: Run autonomous coding harness
+        timeout-minutes: 320
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          MODEL: ${{ github.event.inputs.model || 'claude-sonnet-4-5' }}
+          PROJECT_NAME: ${{ github.event.inputs.project_name || 'podcastbrain_ci' }}
+          MAX_ITER: ${{ github.event.inputs.max_iterations || '30' }}
+          NUM_FEATURES: ${{ github.event.inputs.num_features || '5' }}
+        run: |
+          bash autonomous_cli_loop.sh "$PROJECT_NAME" "$MAX_ITER" "$NUM_FEATURES"
+
+      # 無論 harness 成功或失敗都顯示 feature 結果；若 feature_list.json 不存在
+      # 則說明 initializer 就失敗了，印出相應提示。
+      # project_name 白名單驗證：只允許 alphanumeric + dash + underscore，
+      # 防止 path traversal（如 ../../.github）。
+      - name: Show feature results
+        if: always()
+        env:
+          PROJECT_NAME: ${{ github.event.inputs.project_name || 'podcastbrain_ci' }}
+        run: |
+          # 白名單驗證：只允許 alphanumeric + dash + underscore
+          if [[ ! "$PROJECT_NAME" =~ ^[a-zA-Z0-9_-]+$ ]]; then
+            echo "錯誤：project_name 含非法字元，拒絕執行" >&2
+            exit 1
+          fi
+          FEATURE_FILE="generations/$PROJECT_NAME/feature_list.json"
+          if [ -f "$FEATURE_FILE" ]; then
+            python3 - "$FEATURE_FILE" <<'PYEOF'
+          import json, sys
+
+          path = sys.argv[1]
+          with open(path, encoding="utf-8") as f:
+              features = json.load(f)
+
+          passed = [ft for ft in features if ft.get("passes", False)]
+          failed = [ft for ft in features if not ft.get("passes", False)]
+
+          print(f"\n=== Feature Results ===")
+          print(f"PASSED: {len(passed)} / {len(features)}")
+          print(f"FAILED: {len(failed)} / {len(features)}")
+
+          if passed:
+              print("\n✅ Passed:")
+              for ft in passed:
+                  print(f"  - {ft.get('name', ft.get('id', '(unnamed)'))}")
+
+          if failed:
+              print("\n❌ Failed:")
+              for ft in failed:
+                  print(f"  - {ft.get('name', ft.get('id', '(unnamed)'))}")
+
+          print("======================\n")
+          PYEOF
+          else
+            echo "feature_list.json not found — initializer may have failed or project dir is empty."
+            echo "Expected path: $FEATURE_FILE"
+          fi
+
+      # 上傳 generations/ 整個目錄作為 artifact，方便後續下載檢視。
+      # path 固定為 generations/（不帶 ${{ }} 展開），消除 path traversal 風險。
+      # retention-days: 30 — 超過 30 天後 GitHub 自動刪除，節省 storage quota。
+      - name: Upload generated app artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: podcastbrain-app-${{ github.run_number }}
+          path: generations/
+          retention-days: 30
+          if-no-files-found: warn

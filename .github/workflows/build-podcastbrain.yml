@@ -42,49 +42,36 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Restore Claude OAuth credentials (Max subscription)
-        # ~/.claude/.credentials.json 含 refreshToken，走 Max 訂閱
+        # ~/.claude/.credentials.json 含 refreshToken，走 Max 訂閱額度不扣 API Credits
         env:
           CLAUDE_CREDENTIALS: ${{ secrets.CLAUDE_CREDENTIALS }}
         run: |
-          # 驗證 secret 有設定
           if [ -z "$CLAUDE_CREDENTIALS" ]; then
             echo "::error::CLAUDE_CREDENTIALS secret is empty or not set!"
-            echo "請到 GitHub repo → Settings → Secrets → Actions 設定"
-            echo "值：cat ~/.claude/.credentials.json 的完整輸出"
+            echo "Set at: GitHub repo Settings → Secrets → Actions"
+            echo "Value: output of 'cat ~/.claude/.credentials.json'"
             exit 1
           fi
-
-          # 寫入 credentials 檔案
           mkdir -p ~/.claude
           printf '%s' "$CLAUDE_CREDENTIALS" > ~/.claude/.credentials.json
-
-          # 診斷：確認路徑和內容
-          echo "HOME=$HOME"
-          echo "credentials path: $HOME/.claude/.credentials.json"
-          echo "file size: $(wc -c < "$HOME/.claude/.credentials.json") bytes"
-
-          # 驗證 JSON 格式和 token 狀態
-          python3 - << 'PYEOF'
-import json, os, time
-path = os.path.expanduser('~/.claude/.credentials.json')
-try:
-    data = json.load(open(path))
-except json.JSONDecodeError as e:
-    print(f"::error::CLAUDE_CREDENTIALS is not valid JSON: {e}")
-    exit(1)
-creds = data.get('claudeAiOauth', {})
-if not creds:
-    print(f"::error::Missing 'claudeAiOauth' key. Found keys: {list(data.keys())}")
-    exit(1)
-exp = creds.get('expiresAt', 0)
-now = int(time.time() * 1000)
-print(f"Credentials OK | subscription: {creds.get('subscriptionType')} | rateLimitTier: {creds.get('rateLimitTier')}")
-if exp > now:
-    print(f"Access token valid: True | remaining: {(exp - now)/60000:.1f} min")
-else:
-    print("Access token EXPIRED (will rely on refreshToken)")
-print(f"Has refreshToken: {'refreshToken' in creds}")
-PYEOF
+          echo "HOME=$HOME  |  credentials: $(wc -c < "$HOME/.claude/.credentials.json") bytes"
+          python3 -c "
+          import json, os, time, sys
+          path = os.path.expanduser('~/.claude/.credentials.json')
+          try:
+              data = json.load(open(path))
+          except json.JSONDecodeError as e:
+              print('::error::CLAUDE_CREDENTIALS is not valid JSON:', e); sys.exit(1)
+          creds = data.get('claudeAiOauth', {})
+          if not creds:
+              print('::error::Missing claudeAiOauth key. Found:', list(data.keys())); sys.exit(1)
+          exp = creds.get('expiresAt', 0)
+          now = int(time.time() * 1000)
+          valid = exp > now
+          print('Credentials OK | sub:', creds.get('subscriptionType'), '| valid:', valid, '| hasRefresh:', 'refreshToken' in creds)
+          if not valid:
+              print('WARNING: access token expired, will rely on refreshToken for auto-refresh')
+          " || { echo "::error::credentials validation failed"; exit 1; }
 
       - name: Set up Node.js 20
         uses: actions/setup-node@v4
@@ -152,39 +139,24 @@ PYEOF
         env:
           PROJECT_NAME: ${{ github.event.inputs.project_name || 'podcastbrain_ci' }}
         run: |
-          # 白名單驗證：只允許 alphanumeric + dash + underscore
           if [[ ! "$PROJECT_NAME" =~ ^[a-zA-Z0-9_-]+$ ]]; then
-            echo "錯誤：project_name 含非法字元，拒絕執行" >&2
+            echo "::error::project_name contains invalid characters" >&2
             exit 1
           fi
           FEATURE_FILE="generations/$PROJECT_NAME/feature_list.json"
           if [ -f "$FEATURE_FILE" ]; then
-            python3 - "$FEATURE_FILE" <<'PYEOF'
+            python3 -c "
           import json, sys
-
           path = sys.argv[1]
-          with open(path, encoding="utf-8") as f:
-              features = json.load(f)
-
-          passed = [ft for ft in features if ft.get("passes", False)]
-          failed = [ft for ft in features if not ft.get("passes", False)]
-
-          print(f"\n=== Feature Results ===")
-          print(f"PASSED: {len(passed)} / {len(features)}")
-          print(f"FAILED: {len(failed)} / {len(features)}")
-
-          if passed:
-              print("\n✅ Passed:")
-              for ft in passed:
-                  print(f"  - {ft.get('name', ft.get('id', '(unnamed)'))}")
-
-          if failed:
-              print("\n❌ Failed:")
-              for ft in failed:
-                  print(f"  - {ft.get('name', ft.get('id', '(unnamed)'))}")
-
-          print("======================\n")
-PYEOF
+          features = json.load(open(path, encoding='utf-8'))
+          passed = [f for f in features if f.get('passes')]
+          failed = [f for f in features if not f.get('passes')]
+          print(f'=== Feature Results ===')
+          print(f'PASSED: {len(passed)}/{len(features)}')
+          for f in features:
+              s = 'PASS' if f.get('passes') else 'FAIL'
+              print(s + ': ' + str(f.get('name', f.get('id', '?'))))
+          " "$FEATURE_FILE"
           else
             echo "feature_list.json not found — initializer may have failed or project dir is empty."
             echo "Expected path: $FEATURE_FILE"

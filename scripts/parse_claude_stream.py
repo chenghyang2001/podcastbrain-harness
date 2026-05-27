@@ -26,7 +26,7 @@ RESULT_PREVIEW = 80
 TEXT_PREVIEW = 150
 
 # poll_file 模式：idle 超過此秒數後印診斷並 exit(1)
-IDLE_TIMEOUT_SEC = 120
+IDLE_TIMEOUT_SEC = 600
 # poll_file 模式：每次 readline 無資料時的等待間隔（秒）
 POLL_INTERVAL = 0.2
 

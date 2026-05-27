@@ -1,5 +1,9 @@
 name: Build PodcastBrain (Autonomous Coding)
 
+# 認證方式：OAuth subscription（不用 ANTHROPIC_API_KEY）
+# 需要設定 GitHub Secret：CLAUDE_CREDENTIALS（內容為 ~/.claude/.credentials.json）
+# 費用走 Max 訂閱額度，不扣 API Credits。
+
 # 僅支援手動觸發，避免意外扣費 API Credits
 on:
   workflow_dispatch:
@@ -37,6 +41,16 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      - name: Restore Claude OAuth credentials (Max subscription)
+        # ~/.claude/.credentials.json 含 refreshToken，讓 claude CLI 走 Max 訂閱
+        # 而非 API Credits。每次 CI 跑前從 GitHub Secret 還原此檔案。
+        # refreshToken 長效（數個月），access token 由 CLI 自動刷新。
+        env:
+          CLAUDE_CREDENTIALS: ${{ secrets.CLAUDE_CREDENTIALS }}
+        run: |
+          mkdir -p ~/.claude
+          printf '%s' "$CLAUDE_CREDENTIALS" > ~/.claude/.credentials.json
+
       - name: Set up Node.js 20
         uses: actions/setup-node@v4
         with:
@@ -48,9 +62,6 @@ jobs:
           python-version: "3.11"
 
       - name: Install claude CLI
-        # ANTHROPIC_API_KEY 僅此 step 需要（安裝時 CLI 可能驗證 key 格式）
-        env:
-          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
         run: npm install -g @anthropic-ai/claude-code
 
       # openai-whisper 拉 PyTorch (~800 MB)，必須在 harness 執行前裝好。
@@ -84,13 +95,12 @@ jobs:
 
       # 主要步驟：執行 autonomous coding harness。
       # 所有 inputs 先移入 env: 區塊，run 裡改用 $ENV_VAR，消除 shell injection 風險。
-      # ANTHROPIC_API_KEY 縮小 scope，只放在此 step。
+      # 認證走 OAuth（~/.claude/.credentials.json），不用 ANTHROPIC_API_KEY。
       # 使用 || 語法的理由：若 harness 非零退出（所有 feature 未通過仍算完成），
       # 後續的 show results 與 upload artifact 步驟仍需執行（if: always()）。
       - name: Run autonomous coding harness
         timeout-minutes: 320
         env:
-          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           MODEL: ${{ github.event.inputs.model || 'claude-sonnet-4-5' }}
           PROJECT_NAME: ${{ github.event.inputs.project_name || 'podcastbrain_ci' }}
           MAX_ITER: ${{ github.event.inputs.max_iterations || '30' }}

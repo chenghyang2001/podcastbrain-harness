@@ -1,0 +1,357 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project_specification>
+  <project_name>PodcastBrain — Podcast and YouTube Knowledge Extraction Platform</project_name>
+
+  <overview>
+    PodcastBrain is a Streamlit web application that converts podcast episodes and YouTube videos
+    into structured knowledge assets. Users provide a URL (YouTube, direct MP3/M4A link) or upload
+    an audio file, and the app automatically downloads the audio with yt-dlp, transcribes it locally
+    using OpenAI Whisper (no audio ever leaves the machine), and then uses Claude AI to generate
+    chapters, a multi-paragraph summary, key quotes with timestamps, action items, and speaker
+    identification. An interactive Q&A mode lets users ask questions that are answered exclusively
+    from the episode transcript — grounding every response in what was actually said.
+
+    The application is privacy-first: all transcription happens on-device using the local Whisper
+    model. No audio or raw transcript is sent to any external service except Claude for analysis,
+    and Claude only receives text. A full-text search library (SQLite FTS5) indexes all transcripts
+    so users can search across their entire episode library in milliseconds. A batch processing
+    queue handles multiple episodes sequentially, and a robust export system produces Markdown
+    notes, PDF documents, SRT subtitle files, and plain text transcripts.
+
+    PodcastBrain is designed for knowledge workers, researchers, and learners who want to extract
+    maximum value from audio content without manual note-taking. The episode library grows over
+    time, and every past episode remains fully searchable and re-analyzable on demand.
+  </overview>
+
+  <technology_stack>
+    <api_key>
+      You can use an API key located at /tmp/api-key for testing. You will not be allowed to read
+      this file, but you can reference it in code. Load it with:
+        with open("/tmp/api-key") as f:
+            api_key = f.read().strip()
+      or via environment variable ANTHROPIC_API_KEY.
+    </api_key>
+    <web_framework>
+      <name>Streamlit</name>
+      <port>Streamlit dashboard runs on port 8501</port>
+      <notes>Pure Streamlit application — no FastAPI backend, no separate REST API server.
+      Multi-page layout using Streamlit's native page system or tab-based navigation.</notes>
+    </web_framework>
+    <language>Python 3.11+</language>
+    <download>yt-dlp — subprocess wrapper for YouTube and direct audio URL download with progress parsing</download>
+    <transcription>openai-whisper — local transcription, no external API key required, model selection (tiny/base/small/medium/large)</transcription>
+    <ai>Anthropic Claude claude-sonnet-4-6 — chapter detection, summary generation, Q&A answering</ai>
+    <database>SQLite via SQLAlchemy 2.x — 4 tables + FTS5 virtual table for full-text search</database>
+    <audio>pydub — audio duration detection, format conversion if needed</audio>
+    <pdf_export>reportlab — PDF export of episode notes and transcripts</pdf_export>
+    <dependencies>
+      streamlit, yt-dlp, openai-whisper, anthropic, sqlalchemy, pydub, reportlab, ffmpeg-python
+    </dependencies>
+  </technology_stack>
+
+  <prerequisites>
+    <environment_setup>
+      - ANTHROPIC_API_KEY environment variable must be set (or /tmp/api-key file present)
+      - Python 3.11+ installed
+      - ffmpeg must be installed and accessible in PATH (required by yt-dlp and Whisper)
+        Install: sudo apt-get install ffmpeg  (Ubuntu/Debian)
+      - yt-dlp installed (pip install yt-dlp)
+      - openai-whisper installed (pip install openai-whisper)
+      - First Whisper run downloads the selected model (~75MB for tiny, ~1.5GB for large)
+      - SQLite FTS5 must be enabled (standard in Python 3.5+ builds)
+      - Sufficient disk space: ~500MB per hour of audio for temp files
+    </environment_setup>
+  </prerequisites>
+
+  <core_features>
+    1. Audio Input — URL input (YouTube watch URLs, direct MP3/M4A/WAV links) and file upload
+       widget (.mp3, .m4a, .wav, .ogg). yt-dlp downloads audio to temp directory. Progress bar
+       updated from yt-dlp stdout parsing. Cancel button terminates subprocess.
+
+    2. Local Whisper Transcription — Model selection dropdown (tiny/base/small/medium/large) with
+       estimated time and accuracy notes per model. Whisper called via subprocess (whisper CLI or
+       python API). Progress estimation from segment count. Outputs full text + JSON segments with
+       timestamps. Language auto-detected or user-specified.
+
+    3. Claude Chapter Detection — Claude receives full transcript text and returns JSON array:
+       [{title, start_seconds, end_seconds, summary}, ...]. Fallback for short episodes
+       (< 5 minutes): single chapter covering full duration. Chapters stored in DB and displayed
+       as clickable timeline.
+
+    4. Claude Full Analysis — Three separate Claude API calls: (a) summary (3-5 paragraphs with
+       key themes), (b) key quotes (5-7 quotes with speaker attribution and timestamp), action
+       items (numbered list of concrete next steps). (c) speaker identification (identify distinct
+       speakers by voice pattern descriptions in transcript).
+
+    5. Ask the Episode Q&A — Keyword-based segment retrieval finds relevant transcript portions.
+       Claude answers strictly from retrieved segments — "cite only transcript" system prompt.
+       Cite mode shows exact transcript passage used. Q&A history stored in DB per episode.
+       Chat-like UI with input box and scrollable history.
+
+    6. Export Options — Markdown (.md) with full structure (summary, chapters, quotes, transcript),
+       PDF (reportlab, formatted with section headers), SRT subtitle file (from Whisper segments),
+       plain TXT (transcript only), ZIP archive containing all formats. All via st.download_button.
+
+    7. Episode Library with Search — FTS5 full-text search across all episode transcripts via
+       st.text_input. Filter by date range, duration range, and source domain. Episode card grid
+       showing thumbnail (YouTube), title, duration, processed date. Click card to open episode detail.
+
+    8. Batch Processing Queue — Add multiple URLs to queue. Sequential processing (one at a time).
+       Status table: [url, title, status, progress, eta]. Status values: queued/downloading/
+       transcribing/analyzing/complete/failed. Optional email notification (via smtplib) on
+       completion. Queue persisted across page reloads via SQLite.
+  </core_features>
+
+  <database_schema>
+    -- Primary episode record
+    CREATE TABLE episodes (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        title TEXT,
+        source_url TEXT NOT NULL,
+        source_type TEXT CHECK(source_type IN ('youtube','direct_url','file_upload')),
+        audio_path TEXT,                  -- temp path to downloaded audio file
+        duration_secs INTEGER,
+        whisper_model TEXT,               -- e.g. 'base', 'small'
+        language TEXT DEFAULT 'en',
+        status TEXT CHECK(status IN ('queued','downloading','transcribing','analyzing','complete','failed')),
+        error_message TEXT,
+        claude_analysis TEXT,             -- JSON: {summary, quotes, action_items, speakers}
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        processed_at TIMESTAMP
+    );
+
+    -- Full transcript with segment-level timestamps
+    CREATE TABLE transcripts (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        episode_id INTEGER NOT NULL REFERENCES episodes(id) ON DELETE CASCADE,
+        full_text TEXT NOT NULL,
+        segments TEXT,                    -- JSON array: [{start, end, text}, ...]
+        word_count INTEGER,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    );
+
+    -- Chapter markers from Claude analysis
+    CREATE TABLE chapters (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        episode_id INTEGER NOT NULL REFERENCES episodes(id) ON DELETE CASCADE,
+        title TEXT NOT NULL,
+        start_seconds INTEGER NOT NULL,
+        end_seconds INTEGER,
+        summary TEXT,
+        sort_order INTEGER NOT NULL
+    );
+
+    -- Q&A interaction history per episode
+    CREATE TABLE qa_history (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        episode_id INTEGER NOT NULL REFERENCES episodes(id) ON DELETE CASCADE,
+        question TEXT NOT NULL,
+        answer TEXT NOT NULL,
+        source_ts TEXT,                   -- JSON array of [start, end] timestamp pairs used
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    );
+
+    -- FTS5 virtual table for full-text transcript search
+    -- Populated via trigger or manual insert after transcript is saved
+    CREATE VIRTUAL TABLE transcripts_fts USING fts5(
+        episode_id UNINDEXED,
+        full_text,
+        content='transcripts',
+        content_rowid='id'
+    );
+
+    -- Trigger to keep FTS5 in sync
+    CREATE TRIGGER transcripts_ai AFTER INSERT ON transcripts BEGIN
+        INSERT INTO transcripts_fts(rowid, episode_id, full_text)
+        VALUES (new.id, new.episode_id, new.full_text);
+    END;
+  </database_schema>
+
+  <api_endpoints_summary>
+    Not applicable — Streamlit-only application with no separate REST API.
+    All data access is through the SQLite database directly from Streamlit page functions.
+    Claude API is called from analyzer.py module imported into Streamlit pages.
+    yt-dlp and Whisper are invoked as subprocesses from downloader.py and transcriber.py.
+  </api_endpoints_summary>
+
+  <ui_layout>
+    ┌─────────────────────────────────────────────────────────────────────┐
+    │  🎧 PodcastBrain  — Turn Audio into Knowledge                       │
+    │─────────────────────────────────────────────────────────────────────│
+    │  Sidebar:                      Main Content:                        │
+    │  ┌───────────────────┐         ┌─────────────────────────────────┐  │
+    │  │ Navigation:       │         │  [Active Page Content]          │  │
+    │  │ ● Process New     │         │                                 │  │
+    │  │ ○ Episode Library │         │  Page: Process New Episode      │  │
+    │  │ ○ Batch Queue     │         │  ┌───────────────────────────┐  │  │
+    │  │                   │         │  │ URL Input or File Upload  │  │  │
+    │  │ Whisper Model:    │         │  │ [________________________]│  │  │
+    │  │ [base ▼]          │         │  │ [Process Episode]         │  │  │
+    │  │                   │         │  └───────────────────────────┘  │  │
+    │  │ Language:         │         │                                 │  │
+    │  │ [auto-detect ▼]   │         │  Processing Status:            │  │
+    │  │                   │         │  ▓▓▓▓▓▓▓░░░ Transcribing...   │  │
+    │  │ Recent Episodes:  │         │                                 │  │
+    │  │ • Episode Title 1 │         │  ─────────────────────────────  │  │
+    │  │ • Episode Title 2 │         │                                 │  │
+    │  └───────────────────┘         │  [Episode Viewer when done]    │  │
+    │                                └─────────────────────────────────┘  │
+    └─────────────────────────────────────────────────────────────────────┘
+
+    Episode Viewer (4 tabs, shown after processing completes):
+    ┌──────────────────────────────────────────────────────────────────┐
+    │  Episode: "My Podcast Episode Title"  |  Duration: 45:23        │
+    │──────────────────────────────────────────────────────────────────│
+    │  [Summary] [Chapters] [Transcript] [Q&A]                        │
+    │──────────────────────────────────────────────────────────────────│
+    │  Summary Tab:                                                    │
+    │  3-5 paragraph overview | Key Quotes list | Action Items list   │
+    │                                                                  │
+    │  Chapters Tab:                                                   │
+    │  Timeline bar | Chapter cards with title, time, summary         │
+    │                                                                  │
+    │  Transcript Tab:                                                 │
+    │  Scrollable text with timestamp anchors | Search within episode  │
+    │                                                                  │
+    │  Q&A Tab:                                                        │
+    │  [Ask a question...] [Ask]                                       │
+    │  Chat history with question/answer pairs and source citations   │
+    └──────────────────────────────────────────────────────────────────┘
+  </ui_layout>
+
+  <key_interactions>
+    Flow 1 — Process a New Episode:
+      User enters YouTube URL → clicks "Process Episode" → sidebar shows Whisper model selection
+      → app shows st.status() container with live updates: "Downloading audio...", "Transcribing
+      (this may take a few minutes)...", "Analyzing with Claude..." → Episode Viewer appears
+      with all 4 tabs populated → user reads summary and explores chapters.
+
+    Flow 2 — Ask the Episode a Question:
+      User clicks Q&A tab → types question in text input → clicks "Ask" → qa_engine.py searches
+      transcript segments by keyword match → Claude answers from retrieved passages only →
+      response appears with "Source:" citation showing the exact transcript excerpt used →
+      Q&A pair added to scrollable chat history below.
+
+    Flow 3 — Search the Episode Library:
+      User clicks "Episode Library" in sidebar navigation → types search query in text input →
+      FTS5 query runs against all transcripts → matching episode cards appear with highlighted
+      snippet showing where the search term appears → user clicks card to open full episode viewer
+      for that episode (loaded from DB, no re-processing needed).
+  </key_interactions>
+
+  <implementation_steps>
+    Step 1 — Project Scaffold:
+    Create the directory structure: podcastbrain/app.py, downloader.py, transcriber.py,
+    analyzer.py, qa_engine.py, db.py, requirements.txt, README.md.
+    Implement db.py: SQLAlchemy 2.x engine, all 4 ORM models (Episode, Transcript, Chapter,
+    QAHistory), FTS5 virtual table creation via text() DDL, the after-insert trigger, create_all()
+    with FTS5 DDL executed separately, session factory with context manager.
+    Implement the Streamlit app.py skeleton: sidebar navigation (Process New / Library / Batch),
+    Whisper model selectbox, language selectbox, recent episodes list.
+
+    Step 2 — yt-dlp Download Module:
+    Implement downloader.py with download_audio(url, output_dir) function.
+    Use subprocess to call yt-dlp with: --format bestaudio, --extract-audio,
+    --audio-format mp3, --progress, --output template. Parse stdout lines for progress percentage
+    (regex: r'\[download\]\s+(\d+\.\d+)%').
+    Update Streamlit progress bar via callback or polling the progress file.
+    Implement cancel_download(pid) using subprocess.terminate().
+    Handle: network errors, private videos, age-restricted content, invalid URLs.
+    Return: {file_path, title, duration_secs, thumbnail_url} on success.
+
+    Step 3 — Whisper Transcription Module:
+    Implement transcriber.py with transcribe_audio(audio_path, model_name, language) function.
+    Call whisper via Python API: import whisper; model = whisper.load_model(model_name);
+    result = model.transcribe(audio_path, language=language).
+    Extract: result["text"] (full transcript), result["segments"] (list with start/end/text).
+    Estimate progress: approximate by audio duration vs. elapsed time.
+    Handle: file not found, unsupported format, model download failure, CUDA/CPU selection.
+    Return: {full_text, segments, word_count, language_detected}.
+
+    Step 4 — Claude Analysis Module:
+    Implement analyzer.py with three separate Claude API functions:
+    (a) generate_chapters(transcript_text, duration_secs, api_key) — system prompt instructs
+    Claude to return JSON array of chapters with title/start_seconds/end_seconds/summary.
+    Validate JSON structure. Fallback to single chapter if parsing fails or duration < 300s.
+    (b) generate_summary_quotes_actions(transcript_text, api_key) — returns JSON with:
+    summary (string), quotes (array of {text, speaker, timestamp_seconds}),
+    action_items (array of strings).
+    (c) identify_speakers(transcript_text, api_key) — returns JSON with speaker labels.
+    All three calls use retry logic (3 attempts, exponential backoff). Store combined result
+    as JSON in episodes.claude_analysis column.
+
+    Step 5 — Streamlit UI: Input and Processing:
+    Process New page: URL text input + file upload widget (accept .mp3, .m4a, .wav, .ogg).
+    "Process Episode" button triggers: create Episode record in DB with status='queued',
+    then sequential: download → transcribe → analyze → update status at each step.
+    Use st.status() container (Streamlit 1.28+) for live step updates with expandable details.
+    Show Whisper model info: tiny (fastest, ~95% accuracy), base (good balance), medium (high accuracy).
+    After processing completes, render Episode Viewer automatically.
+
+    Step 6 — Streamlit UI: Episode Viewer:
+    Four-tab layout per episode: Summary, Chapters, Transcript, Q&A.
+    Summary tab: formatted markdown from claude_analysis JSON. Key quotes as blockquotes with
+    timestamps. Action items as numbered list with checkboxes (st.checkbox).
+    Chapters tab: horizontal timeline visualization (Plotly bar chart with chapter segments).
+    Chapter cards below: title, "MM:SS - MM:SS", summary text.
+    Transcript tab: full transcript in scrollable container. Timestamps as dimmed text before
+    each segment. Within-episode search using st.text_input + highlight matching text.
+    Q&A tab: chat interface with st.chat_input (Streamlit 1.31+) or st.text_input. Chat history
+    rendered with st.chat_message containers. Source citation in collapsible st.expander.
+
+    Step 7 — Q&A Engine:
+    Implement qa_engine.py with answer_question(episode_id, question, api_key, db_session).
+    Segment retrieval: split question into keywords, search transcript segments JSON for keyword
+    matches, return top-10 most relevant segments sorted by keyword match score.
+    Build Claude prompt: system = "Answer only from the provided transcript excerpts.
+    If the answer is not in the transcript, say so explicitly. Do not hallucinate."
+    User message = question + retrieved segments formatted as numbered excerpts with timestamps.
+    Parse response: extract answer text and identify which segment numbers were cited.
+    Store Q&A pair in qa_history table with source_ts JSON array of timestamp pairs.
+    Return: {answer, cited_segments, raw_response}.
+
+    Step 8 — Library, Search, Batch Queue, and Export:
+    Library page: st.text_input triggers FTS5 query: SELECT e.*, snippet(transcripts_fts, ...).
+    Episode cards in 3-column grid: title, source_url domain, duration, processed_at.
+    Date range filter via st.date_input. Duration filter via st.slider (0-180 minutes).
+    Batch Queue page: st.text_area for multi-URL input (one per line). "Add to Queue" button
+    inserts Episode records with status='queued'. Status table auto-refreshes every 5 seconds
+    using st.empty() + time.sleep loop or st.rerun(). Process queue sequentially.
+    Export functions in app.py: export_markdown(episode_id), export_pdf(episode_id),
+    export_srt(episode_id), export_txt(episode_id). ZIP via Python zipfile module.
+    All exports via st.download_button with appropriate MIME types.
+  </implementation_steps>
+
+  <success_criteria>
+    Functional:
+    - App loads and displays Streamlit dashboard at http://localhost:8501
+    - Entering a YouTube URL and clicking "Process Episode" starts the download process
+    - Whisper transcription produces a non-empty transcript for a short audio file
+    - Claude analysis generates at least 1 chapter and a non-empty summary
+    - Q&A returns answers with source citations from the transcript
+    - Episode library shows previously processed episodes
+    - FTS5 search returns matching episodes for a keyword present in a transcript
+    - PDF export downloads a non-empty PDF with episode title and summary
+    - SRT export downloads a valid subtitle file with timestamp format 00:00:00,000
+    - Batch queue processes multiple URLs sequentially with live status updates
+
+    UX:
+    - st.status() container shows live step updates during processing
+    - Episode viewer tabs are fully populated after processing completes
+    - Chapter timeline is visually rendered (not just text)
+    - Q&A chat history is scrollable and persists within the session
+    - Library search results appear within 1 second
+    - No unhandled Python exceptions visible in Streamlit (red error boxes)
+    - File upload accepts .mp3/.m4a/.wav files without error
+
+    Technical Quality:
+    - SQLite DB with FTS5 virtual table created at startup
+    - FTS5 trigger correctly indexes new transcripts automatically
+    - Whisper is called with correct model name and returns segments with timestamps
+    - Claude receives only text (never audio binary data)
+    - All three Claude API calls are separate functions in analyzer.py
+    - qa_engine.py system prompt contains "Answer only from the provided transcript excerpts"
+    - yt-dlp subprocess is terminated cleanly if user cancels
+    - Temp audio files are cleaned up after transcription is stored in DB
+  </success_criteria>
+</project_specification>

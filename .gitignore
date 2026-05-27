@@ -1,0 +1,6 @@
+generations/
+__pycache__/
+*.pyc
+*.log
+*.lock
+.env

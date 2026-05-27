@@ -53,7 +53,7 @@ jobs:
             exit 1
           fi
           mkdir -p ~/.claude
-          printf '%s' "$CLAUDE_CREDENTIALS" > ~/.claude/.credentials.json
+          printf '%s' "$CLAUDE_CREDENTIALS" | tr -d '\r\n' > ~/.claude/.credentials.json
           echo "HOME=$HOME  |  credentials: $(wc -c < "$HOME/.claude/.credentials.json") bytes"
           python3 -c "
           import json, os, time, sys

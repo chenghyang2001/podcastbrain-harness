@@ -285,6 +285,12 @@ jobs:
           pkill -f "streamlit run" || true
           sleep 2
 
+          # Install yt-dlp binary system-wide so subprocess finds it in PATH
+          if ! command -v yt-dlp &>/dev/null; then
+            sudo curl -sL https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp -o /usr/local/bin/yt-dlp
+            sudo chmod a+rx /usr/local/bin/yt-dlp
+          fi
+
           # Create or update Python venv
           python3 -m venv "$DEPLOY_DIR/.venv"
           "$DEPLOY_DIR/.venv/bin/pip" install -r "$DEPLOY_DIR/requirements.txt" --quiet

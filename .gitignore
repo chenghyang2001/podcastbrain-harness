@@ -4,3 +4,4 @@ __pycache__/
 *.log
 *.lock
 .env
+bash.exe.stackdump

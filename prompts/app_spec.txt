@@ -1,0 +1,130 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project_specification version="v1-mvp">
+  <project_name>PodcastBrain — MVP: Audio Downloader</project_name>
+
+  <overview>
+    PodcastBrain v1 is the absolute minimum viable product: a Streamlit web application
+    that accepts a YouTube URL or direct audio link and downloads the audio file to a
+    local directory using yt-dlp. The user can see download progress in real time and
+    retrieve the saved file path when done. No transcription, no AI analysis, no database.
+    The single goal is to prove that audio acquisition works reliably before layering
+    any intelligence on top.
+  </overview>
+
+  <feature_list>
+    [
+      {
+        "id": 1,
+        "name": "Audio Input",
+        "description": "URL input field (YouTube watch URLs, direct MP3/M4A links) with yt-dlp download and live progress bar."
+      }
+    ]
+  </feature_list>
+
+  <technology_stack>
+    <api_key>Not required for v1.</api_key>
+    <web_framework>
+      <name>Streamlit</name>
+      <port>8501</port>
+      <notes>Single-page Streamlit app, no sidebar navigation needed.</notes>
+    </web_framework>
+    <language>Python 3.11+</language>
+    <download>yt-dlp — subprocess wrapper with stdout progress parsing</download>
+    <transcription>Not included in v1.</transcription>
+    <ai>Not included in v1.</ai>
+    <database>Not included in v1. Downloaded files stored in ./downloads/ directory.</database>
+    <dependencies>
+      streamlit, yt-dlp, ffmpeg-python
+    </dependencies>
+  </technology_stack>
+
+  <prerequisites>
+    <environment_setup>
+      - Python 3.11+ installed
+      - ffmpeg must be installed and accessible in PATH
+        Install: sudo apt-get install ffmpeg  (Ubuntu/Debian)
+      - yt-dlp installed (pip install yt-dlp)
+      - ./downloads/ directory writable
+    </environment_setup>
+  </prerequisites>
+
+  <core_features>
+    1. Audio Input — URL text input (YouTube watch URLs, direct MP3/M4A/WAV links).
+       "Download Audio" button triggers yt-dlp subprocess. Progress bar updated from
+       yt-dlp stdout parsing (regex: r'\[download\]\s+(\d+\.\d+)%'). Cancel button
+       terminates the subprocess. On success, display the saved file path and file size.
+       On failure, display the yt-dlp error message. Files saved to ./downloads/ with
+       sanitized filename derived from video title. No audio leaves the machine.
+  </core_features>
+
+  <database_schema>
+    Not applicable for v1. Files saved directly to ./downloads/ directory.
+    No persistent state between sessions.
+  </database_schema>
+
+  <api_endpoints_summary>
+    Not applicable — Streamlit-only, no REST API.
+    yt-dlp invoked as subprocess from downloader.py.
+  </api_endpoints_summary>
+
+  <ui_layout>
+    ┌─────────────────────────────────────────────────────────┐
+    │  🎧 PodcastBrain — Download Audio                       │
+    │─────────────────────────────────────────────────────────│
+    │  Enter a YouTube URL or direct audio link:              │
+    │  [________________________________________________]     │
+    │  [Download Audio]  [Cancel]                             │
+    │                                                         │
+    │  ▓▓▓▓▓░░░░░  47% — Downloading...                      │
+    │                                                         │
+    │  ✅ Saved to: ./downloads/my-episode.mp3 (42.3 MB)     │
+    └─────────────────────────────────────────────────────────┘
+  </ui_layout>
+
+  <key_interactions>
+    Flow 1 — Download a YouTube episode:
+      User pastes YouTube URL → clicks "Download Audio" → progress bar updates live
+      as yt-dlp downloads → completion message shows saved file path and size.
+
+    Flow 2 — Cancel mid-download:
+      User clicks "Cancel" → yt-dlp subprocess terminated → partial file deleted
+      → UI resets to input state.
+  </key_interactions>
+
+  <implementation_steps>
+    Step 1 — Project Scaffold:
+    Create directory structure: podcastbrain/app.py, downloader.py, requirements.txt.
+    Create ./downloads/ directory if not exists.
+
+    Step 2 — yt-dlp Download Module:
+    Implement downloader.py with download_audio(url, output_dir) function.
+    Use subprocess to call yt-dlp with: --format bestaudio, --extract-audio,
+    --audio-format mp3, --progress, --output template.
+    Parse stdout lines for progress percentage (regex: r'\[download\]\s+(\d+\.\d+)%').
+    Update Streamlit progress bar via st.session_state shared value.
+    Implement cancel_download(pid) using process.terminate().
+    Handle: network errors, private videos, invalid URLs.
+    Return: {file_path, title, file_size_mb} on success, raise exception on failure.
+
+    Step 3 — Streamlit UI:
+    Single-page app.py. URL text_input. "Download Audio" button starts subprocess in
+    background thread and polls progress into st.progress(). "Cancel" button sets a
+    session_state flag that terminates the process. Show success or error message on
+    completion.
+  </implementation_steps>
+
+  <success_criteria>
+    Functional:
+    - App loads at http://localhost:8501 without errors
+    - Pasting a valid YouTube URL and clicking Download starts the process
+    - Progress bar increments from 0% to 100% during download
+    - File appears in ./downloads/ directory after completion
+    - Invalid URL shows a readable error message (not a Python traceback)
+    - Cancel button stops the download and cleans up partial files
+
+    Technical Quality:
+    - yt-dlp subprocess is terminated cleanly on cancel
+    - No hardcoded paths (use Path.cwd() / "downloads")
+    - Progress parsing handles yt-dlp output format variations gracefully
+  </success_criteria>
+</project_specification>

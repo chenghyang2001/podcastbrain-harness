@@ -1,0 +1,299 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project_specification version="v4">
+  <project_name>PodcastBrain — v4: Export + Library Search</project_name>
+
+  <overview>
+    PodcastBrain v4 adds two key productivity features to v3's foundation:
+    Export Options and an Episode Library with full-text search. Users can now
+    export any episode as Markdown, PDF, SRT subtitles, or plain text — and
+    download a ZIP of all formats at once. The Episode Library page uses SQLite
+    FTS5 to search across all episode transcripts in milliseconds, with filters
+    for date range and duration. Clicking a search result opens the full Episode
+    Viewer for that episode without re-processing. This makes PodcastBrain a
+    genuine personal knowledge base for audio content, not just a one-time processor.
+  </overview>
+
+  <feature_list>
+    [
+      {
+        "id": 1,
+        "name": "Audio Input",
+        "description": "URL input (YouTube + direct links) and file upload (.mp3/.m4a/.wav) with yt-dlp download and live progress bar."
+      },
+      {
+        "id": 2,
+        "name": "Local Whisper Transcription",
+        "description": "On-device transcription with model selection. Full text + timestamped segments stored in DB."
+      },
+      {
+        "id": 3,
+        "name": "Claude Chapter Detection",
+        "description": "Claude detects chapters and returns [{title, start_seconds, end_seconds, summary}] JSON with retry logic."
+      },
+      {
+        "id": 4,
+        "name": "Claude Full Analysis",
+        "description": "Three separate Claude calls: summary, key quotes with timestamps, action items, and speaker identification."
+      },
+      {
+        "id": 5,
+        "name": "Ask the Episode Q&A",
+        "description": "Transcript-grounded Q&A with source citations. Q&A history persisted in DB per episode."
+      },
+      {
+        "id": 6,
+        "name": "Export Options",
+        "description": "Export as Markdown (.md), PDF (reportlab), SRT subtitles, plain TXT, or ZIP containing all formats. All via st.download_button."
+      },
+      {
+        "id": 7,
+        "name": "Episode Library with Search",
+        "description": "FTS5 full-text search across all episode transcripts. Filter by date range and duration. Episode cards in grid layout. Click to open Episode Viewer."
+      }
+    ]
+  </feature_list>
+
+  <technology_stack>
+    <api_key>
+      ANTHROPIC_API_KEY environment variable must be set.
+      Load with: api_key = os.environ["ANTHROPIC_API_KEY"]
+    </api_key>
+    <web_framework>
+      <name>Streamlit</name>
+      <port>8501</port>
+      <notes>Three navigation pages: Process New / Episode Library / Batch (stub).
+      Episode Viewer: Summary, Chapters, Transcript, Q&A tabs + Export section.</notes>
+    </web_framework>
+    <language>Python 3.11+</language>
+    <download>yt-dlp — subprocess wrapper with stdout progress parsing</download>
+    <transcription>openai-whisper — local transcription, model selection</transcription>
+    <ai>Anthropic Claude claude-sonnet-4-6 — chapters, full analysis, Q&A</ai>
+    <database>SQLite via SQLAlchemy 2.x — 4 tables + FTS5 virtual table for full-text search</database>
+    <audio>pydub — audio duration detection</audio>
+    <pdf_export>reportlab — PDF export of episode notes and transcripts</pdf_export>
+    <dependencies>
+      streamlit, yt-dlp, openai-whisper, anthropic, sqlalchemy, pydub, reportlab, ffmpeg-python
+    </dependencies>
+  </technology_stack>
+
+  <prerequisites>
+    <environment_setup>
+      - ANTHROPIC_API_KEY environment variable must be set
+      - Python 3.11+ installed
+      - ffmpeg must be installed and accessible in PATH
+      - yt-dlp installed (pip install yt-dlp)
+      - openai-whisper installed (pip install openai-whisper)
+      - reportlab installed (pip install reportlab)
+      - SQLite FTS5 must be enabled (standard in Python 3.5+ builds)
+      - Sufficient disk space: ~500MB per hour of audio for temp files
+    </environment_setup>
+  </prerequisites>
+
+  <core_features>
+    1. Audio Input — URL text input (YouTube watch URLs, direct MP3/M4A/WAV links) and
+       file upload widget (.mp3, .m4a, .wav). yt-dlp downloads audio to temp directory.
+       Progress bar updated from stdout parsing. Cancel button terminates subprocess.
+
+    2. Local Whisper Transcription — Model selection dropdown (tiny/base/small/medium/large)
+       with estimated time and accuracy notes. Whisper called via Python API. Extracts
+       full_text and segments (start/end/text). Language auto-detected or user-specified.
+
+    3. Claude Chapter Detection — Claude receives full transcript text and returns JSON array:
+       [{title, start_seconds, end_seconds, summary}, ...]. JSON validated, 3 retries with
+       exponential backoff. Fallback to single chapter for episodes shorter than 300 seconds.
+
+    4. Claude Full Analysis — Three separate Claude API calls:
+       (a) generate_summary_quotes_actions(transcript_text, api_key) — JSON {summary, quotes,
+           action_items} where quotes have {text, speaker, timestamp_seconds}.
+       (b) identify_speakers(transcript_text, api_key) — JSON {speakers: [...]}.
+       Combined result stored as JSON in episodes.claude_analysis.
+
+    5. Ask the Episode Q&A — Keyword-based segment retrieval (top-10 by match score).
+       Claude answers with "Answer only from transcript" system prompt. Source citations
+       shown in st.expander. Q&A pairs stored in qa_history table.
+
+    6. Export Options — export_markdown(episode_id), export_pdf(episode_id),
+       export_srt(episode_id), export_txt(episode_id). ZIP via Python zipfile module.
+       Markdown includes: summary, chapters, quotes, transcript. PDF via reportlab with
+       section headers. SRT from Whisper segments with correct 00:00:00,000 timestamp format.
+       All exports via st.download_button with appropriate MIME types.
+
+    7. Episode Library with Search — FTS5 full-text search across all episode transcripts
+       via st.text_input. Filter by date range (st.date_input) and duration (st.slider,
+       0-180 minutes). Episode card grid (3 columns): thumbnail (YouTube), title, duration,
+       processed date. Click card to open Episode Viewer for that episode (loaded from DB,
+       no re-processing). Snippet highlighting shows where search term appears.
+  </core_features>
+
+  <database_schema>
+    -- Primary episode record
+    CREATE TABLE episodes (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        title TEXT,
+        source_url TEXT NOT NULL,
+        source_type TEXT CHECK(source_type IN ('youtube','direct_url','file_upload')),
+        audio_path TEXT,
+        duration_secs INTEGER,
+        whisper_model TEXT,
+        language TEXT DEFAULT 'en',
+        status TEXT CHECK(status IN ('queued','downloading','transcribing','analyzing','complete','failed')),
+        error_message TEXT,
+        claude_analysis TEXT,             -- JSON: {summary, quotes, action_items, speakers}
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        processed_at TIMESTAMP
+    );
+
+    -- Full transcript with segment-level timestamps
+    CREATE TABLE transcripts (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        episode_id INTEGER NOT NULL REFERENCES episodes(id) ON DELETE CASCADE,
+        full_text TEXT NOT NULL,
+        segments TEXT,                    -- JSON array: [{start, end, text}, ...]
+        word_count INTEGER,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    );
+
+    -- Chapter markers from Claude analysis
+    CREATE TABLE chapters (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        episode_id INTEGER NOT NULL REFERENCES episodes(id) ON DELETE CASCADE,
+        title TEXT NOT NULL,
+        start_seconds INTEGER NOT NULL,
+        end_seconds INTEGER,
+        summary TEXT,
+        sort_order INTEGER NOT NULL
+    );
+
+    -- Q&A interaction history per episode
+    CREATE TABLE qa_history (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        episode_id INTEGER NOT NULL REFERENCES episodes(id) ON DELETE CASCADE,
+        question TEXT NOT NULL,
+        answer TEXT NOT NULL,
+        source_ts TEXT,                   -- JSON array of [start, end] timestamp pairs
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    );
+
+    -- FTS5 virtual table for full-text transcript search
+    CREATE VIRTUAL TABLE transcripts_fts USING fts5(
+        episode_id UNINDEXED,
+        full_text,
+        content='transcripts',
+        content_rowid='id'
+    );
+
+    -- Trigger to keep FTS5 in sync
+    CREATE TRIGGER transcripts_ai AFTER INSERT ON transcripts BEGIN
+        INSERT INTO transcripts_fts(rowid, episode_id, full_text)
+        VALUES (new.id, new.episode_id, new.full_text);
+    END;
+  </database_schema>
+
+  <api_endpoints_summary>
+    Not applicable — Streamlit-only, no REST API.
+    Claude API called from analyzer.py and qa_engine.py.
+    yt-dlp and Whisper invoked as subprocesses.
+  </api_endpoints_summary>
+
+  <ui_layout>
+    ┌─────────────────────────────────────────────────────────────────────┐
+    │  🎧 PodcastBrain — Turn Audio into Knowledge                        │
+    │─────────────────────────────────────────────────────────────────────│
+    │  Sidebar:                      Main Content:                        │
+    │  ┌───────────────────┐         ┌─────────────────────────────────┐  │
+    │  │ ● Process New     │         │  [Active Page Content]          │  │
+    │  │ ○ Episode Library │         │                                 │  │
+    │  │ ○ Batch Queue     │         │  Library Page:                  │  │
+    │  │                   │         │  🔍 [Search transcripts...]     │  │
+    │  │ Whisper Model:    │         │  Date: [from] to [to]           │  │
+    │  │ [base ▼]          │         │  Duration: [0 ──────── 180] min │  │
+    │  │ Language:         │         │                                 │  │
+    │  │ [auto-detect ▼]   │         │  [Card] [Card] [Card]           │  │
+    │  │                   │         │  [Card] [Card] [Card]           │  │
+    │  │ Recent Episodes:  │         └─────────────────────────────────┘  │
+    │  │ • Episode Title 1 │                                              │
+    │  │ • Episode Title 2 │                                              │
+    │  └───────────────────┘                                              │
+    └─────────────────────────────────────────────────────────────────────┘
+
+    Episode Viewer (after processing or clicking a library card):
+    ┌──────────────────────────────────────────────────────────────────┐
+    │  Episode: "Title"  |  Duration: 45:23                           │
+    │──────────────────────────────────────────────────────────────────│
+    │  [Summary] [Chapters] [Transcript] [Q&A]                        │
+    │  ── Export: [📄 MD] [📕 PDF] [💬 SRT] [📝 TXT] [📦 ZIP] ──     │
+    └──────────────────────────────────────────────────────────────────┘
+  </ui_layout>
+
+  <key_interactions>
+    Flow 1 — Process a new episode:
+      URL → Process → st.status() shows four steps → Episode Viewer with 4 tabs + Export bar.
+
+    Flow 2 — Ask a question:
+      Q&A tab → type question → grounded answer with source citation in st.expander.
+
+    Flow 3 — Search the Episode Library:
+      Episode Library page → type keyword → FTS5 runs across all transcripts → episode cards
+      show with snippet highlighting → click card to open full Episode Viewer from DB.
+
+    Flow 4 — Export:
+      Any episode → Export row of download buttons → Markdown / PDF / SRT / TXT / ZIP
+      downloaded directly via browser.
+  </key_interactions>
+
+  <implementation_steps>
+    Step 1 — Project Scaffold:
+    Create: app.py, downloader.py, transcriber.py, analyzer.py, qa_engine.py, db.py,
+    requirements.txt.
+    db.py: all 4 ORM models + FTS5 virtual table via text() DDL + after-insert trigger.
+    create_all() with FTS5 DDL executed separately.
+
+    Step 2 — yt-dlp Download Module: (same as v3)
+
+    Step 3 — Whisper Transcription Module: (same as v3)
+
+    Step 4 — Claude Analysis Module: (same as v3, three separate functions with retry)
+
+    Step 5 — Q&A Engine: (same as v3)
+
+    Step 6 — Export Module:
+    In app.py or export.py: export_markdown(episode_id, db), export_pdf(episode_id, db),
+    export_srt(episode_id, db), export_txt(episode_id, db).
+    SRT: format each Whisper segment as SRT block (index, HH:MM:SS,mmm --> HH:MM:SS,mmm, text).
+    PDF: reportlab SimpleDocTemplate with title, date, summary paragraphs, chapter list,
+    quotes section, full transcript.
+    ZIP: zipfile.ZipFile in memory, write all four formats, return BytesIO.
+    All exposed via st.download_button in Episode Viewer.
+
+    Step 7 — Streamlit UI: Episode Viewer with Export:
+    Four-tab layout (Summary, Chapters, Transcript, Q&A).
+    Export row of 5 st.download_button widgets below the tabs.
+
+    Step 8 — Streamlit UI: Episode Library:
+    FTS5 query: SELECT e.*, snippet(transcripts_fts, 1, '**', '**', '...', 30).
+    3-column grid with episode cards. date_input filter for date range. Slider for
+    duration filter. Click card sets session_state episode_id and switches to Process
+    New page episode viewer mode.
+  </implementation_steps>
+
+  <success_criteria>
+    Functional:
+    - All v3 criteria met
+    - Markdown export downloads .md file with summary, chapters, quotes, transcript
+    - PDF export downloads non-empty .pdf with episode title and summary
+    - SRT export downloads valid .srt with timestamp format 00:00:00,000
+    - ZIP export downloads archive containing all four formats
+    - Episode Library search returns matching episodes for keywords in transcripts
+    - Search snippet shows highlighted context around matched term
+    - Date range and duration filters narrow search results correctly
+    - Clicking a library card opens full Episode Viewer from DB without re-processing
+
+    Technical Quality:
+    - FTS5 virtual table created at startup
+    - FTS5 trigger correctly indexes new transcripts automatically
+    - SRT timestamps follow HH:MM:SS,mmm format exactly
+    - PDF export uses reportlab (not fpdf or weasyprint)
+    - Export functions are standalone and testable independently
+    - Library FTS5 query uses snippet() function for highlighted excerpts
+  </success_criteria>
+</project_specification>

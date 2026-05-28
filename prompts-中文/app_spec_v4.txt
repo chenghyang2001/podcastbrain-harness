@@ -1,0 +1,296 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project_specification version="v4">
+  <project_name>PodcastBrain — v4：匯出 + 媒體庫搜尋</project_name>
+
+  <overview>
+    PodcastBrain v4 在 v3 的基礎上新增了兩項關鍵的生產力功能：
+    匯出選項與含全文搜尋的集數媒體庫。使用者現在可以將任何集數匯出為
+    Markdown、PDF、SRT 字幕或純文字格式——也可以一次下載包含所有格式的 ZIP 壓縮檔。
+    「集數媒體庫」頁面使用 SQLite FTS5，可在毫秒內搜尋所有集數的逐字稿，
+    並支援日期範圍和時長篩選。點擊搜尋結果即可開啟該集數的完整檢視器，
+    無需重新處理。這使 PodcastBrain 成為音頻內容的真正個人知識庫，
+    而不僅僅是一次性的處理工具。
+  </overview>
+
+  <feature_list>
+    [
+      {
+        "id": 1,
+        "name": "音頻輸入",
+        "description": "URL 輸入（YouTube + 直接連結）和檔案上傳（.mp3/.m4a/.wav），帶 yt-dlp 下載和即時進度列。"
+      },
+      {
+        "id": 2,
+        "name": "本機 Whisper 轉錄",
+        "description": "裝置上轉錄，支援模型選擇。完整文字與帶時間戳記的片段儲存至資料庫。"
+      },
+      {
+        "id": 3,
+        "name": "Claude 章節偵測",
+        "description": "Claude 偵測章節並回傳含重試機制的 [{title, start_seconds, end_seconds, summary}] JSON。"
+      },
+      {
+        "id": 4,
+        "name": "Claude 完整分析",
+        "description": "三個獨立 Claude 呼叫：摘要、帶時間戳記的關鍵引述、行動項目，以及說話者識別。"
+      },
+      {
+        "id": 5,
+        "name": "向集數提問（問答功能）",
+        "description": "以逐字稿為根據的問答，含來源引用。每個集數的問答歷史持久儲存於資料庫。"
+      },
+      {
+        "id": 6,
+        "name": "匯出選項",
+        "description": "匯出為 Markdown（.md）、PDF（reportlab）、SRT 字幕、純文字，或包含所有格式的 ZIP。全部透過 st.download_button 實現。"
+      },
+      {
+        "id": 7,
+        "name": "含搜尋功能的集數媒體庫",
+        "description": "FTS5 跨所有集數逐字稿的全文搜尋。日期範圍與時長篩選。3 欄集數卡片格網，含文字摘錄高亮。點擊即可開啟集數檢視器。"
+      }
+    ]
+  </feature_list>
+
+  <technology_stack>
+    <api_key>
+      ANTHROPIC_API_KEY 環境變數必須設定。
+      載入方式：api_key = os.environ["ANTHROPIC_API_KEY"]
+    </api_key>
+    <web_framework>
+      <name>Streamlit</name>
+      <port>8501</port>
+      <notes>三個導航頁面：處理新集數 / 集數媒體庫 / 批次佇列（存根）。
+      集數檢視器：摘要、章節、逐字稿、問答四個分頁，加上匯出區。</notes>
+    </web_framework>
+    <language>Python 3.11+</language>
+    <download>yt-dlp — 子程序包裝器，解析 stdout 進度</download>
+    <transcription>openai-whisper — 本機轉錄，模型選擇</transcription>
+    <ai>Anthropic Claude claude-sonnet-4-6 — 章節偵測、完整分析、問答</ai>
+    <database>SQLite via SQLAlchemy 2.x — 4 個資料表 + FTS5 虛擬資料表（全文搜尋）</database>
+    <audio>pydub — 音頻時長偵測</audio>
+    <pdf_export>reportlab — 集數筆記與逐字稿的 PDF 匯出</pdf_export>
+    <dependencies>
+      streamlit, yt-dlp, openai-whisper, anthropic, sqlalchemy, pydub, reportlab, ffmpeg-python
+    </dependencies>
+  </technology_stack>
+
+  <prerequisites>
+    <environment_setup>
+      - ANTHROPIC_API_KEY 環境變數必須設定
+      - 已安裝 Python 3.11+
+      - ffmpeg 必須安裝並可在 PATH 中存取
+      - 已安裝 yt-dlp（pip install yt-dlp）
+      - 已安裝 openai-whisper（pip install openai-whisper）
+      - 已安裝 reportlab（pip install reportlab）
+      - SQLite FTS5 必須啟用（Python 3.5+ 標準版本均支援）
+      - 足夠的磁碟空間：每小時音頻約需 500MB 暫存空間
+    </environment_setup>
+  </prerequisites>
+
+  <core_features>
+    1. 音頻輸入 — URL 文字輸入（YouTube 觀看網址、直接 MP3/M4A/WAV 連結）和
+       檔案上傳小工具（.mp3、.m4a、.wav）。yt-dlp 將音頻下載至暫存目錄。
+       進度列從 stdout 解析更新。取消按鈕終止子程序。
+
+    2. 本機 Whisper 轉錄 — 模型選擇下拉選單（tiny/base/small/medium/large），
+       含每個模型的預估時間和精確度說明。透過 Python API 呼叫 Whisper。
+       擷取 full_text 和 segments（start/end/text）。語言自動偵測或由使用者指定。
+
+    3. Claude 章節偵測 — Claude 接收完整逐字稿文字，回傳 JSON 陣列：
+       [{title, start_seconds, end_seconds, summary}, ...]。JSON 驗證，最多重試 3 次，
+       指數退避。時長短於 300 秒的集數退回至單一章節。
+
+    4. Claude 完整分析 — 三個獨立 Claude API 呼叫：
+       (a) generate_summary_quotes_actions(transcript_text, api_key) — JSON {summary, quotes,
+           action_items}，其中 quotes 包含 {text, speaker, timestamp_seconds}。
+       (b) identify_speakers(transcript_text, api_key) — JSON {speakers: [...]}。
+       合併結果以 JSON 形式儲存於 episodes.claude_analysis。
+
+    5. 向集數提問（問答功能） — 關鍵字片段檢索（依比對分數排序前 10 名）。
+       Claude 使用「僅根據逐字稿回答」系統提示。來源引用在 st.expander 中展示。
+       問答對儲存至 qa_history 資料表。
+
+    6. 匯出選項 — export_markdown(episode_id)、export_pdf(episode_id)、
+       export_srt(episode_id)、export_txt(episode_id)。ZIP 使用 Python zipfile 模組。
+       Markdown 包含：摘要、章節、引述、逐字稿。PDF 使用 reportlab 含章節標題。
+       SRT 從 Whisper 片段生成，格式正確（00:00:00,000）。
+       所有匯出透過 st.download_button 提供，使用正確的 MIME 類型。
+
+    7. 含搜尋功能的集數媒體庫 — 透過 st.text_input 對所有集數逐字稿進行 FTS5 全文搜尋。
+       以 st.date_input 篩選日期範圍，st.slider 篩選時長（0-180 分鐘）。
+       3 欄集數卡片格網：縮圖（YouTube）、標題、時長、處理日期。
+       點擊卡片開啟該集數的集數檢視器（從資料庫載入，無需重新處理）。
+       snippet() 函式提供搜尋詞出現位置的高亮摘錄。
+  </core_features>
+
+  <database_schema>
+    -- 主要集數記錄
+    CREATE TABLE episodes (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        title TEXT,
+        source_url TEXT NOT NULL,
+        source_type TEXT CHECK(source_type IN ('youtube','direct_url','file_upload')),
+        audio_path TEXT,
+        duration_secs INTEGER,
+        whisper_model TEXT,
+        language TEXT DEFAULT 'en',
+        status TEXT CHECK(status IN ('queued','downloading','transcribing','analyzing','complete','failed')),
+        error_message TEXT,
+        claude_analysis TEXT,             -- JSON：{summary, quotes, action_items, speakers}
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        processed_at TIMESTAMP
+    );
+
+    -- 含片段級時間戳記的完整逐字稿
+    CREATE TABLE transcripts (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        episode_id INTEGER NOT NULL REFERENCES episodes(id) ON DELETE CASCADE,
+        full_text TEXT NOT NULL,
+        segments TEXT,                    -- JSON 陣列：[{start, end, text}, ...]
+        word_count INTEGER,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    );
+
+    -- 來自 Claude 分析的章節標記
+    CREATE TABLE chapters (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        episode_id INTEGER NOT NULL REFERENCES episodes(id) ON DELETE CASCADE,
+        title TEXT NOT NULL,
+        start_seconds INTEGER NOT NULL,
+        end_seconds INTEGER,
+        summary TEXT,
+        sort_order INTEGER NOT NULL
+    );
+
+    -- 每個集數的問答互動歷史記錄
+    CREATE TABLE qa_history (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        episode_id INTEGER NOT NULL REFERENCES episodes(id) ON DELETE CASCADE,
+        question TEXT NOT NULL,
+        answer TEXT NOT NULL,
+        source_ts TEXT,                   -- 使用的時間戳記對 JSON 陣列
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    );
+
+    -- FTS5 虛擬資料表（全文逐字稿搜尋）
+    CREATE VIRTUAL TABLE transcripts_fts USING fts5(
+        episode_id UNINDEXED,
+        full_text,
+        content='transcripts',
+        content_rowid='id'
+    );
+
+    -- 觸發器，保持 FTS5 同步
+    CREATE TRIGGER transcripts_ai AFTER INSERT ON transcripts BEGIN
+        INSERT INTO transcripts_fts(rowid, episode_id, full_text)
+        VALUES (new.id, new.episode_id, new.full_text);
+    END;
+  </database_schema>
+
+  <api_endpoints_summary>
+    不適用 — 僅 Streamlit，無 REST API。
+    Claude API 從 analyzer.py 和 qa_engine.py 呼叫。
+    yt-dlp 和 Whisper 以子程序執行。
+  </api_endpoints_summary>
+
+  <ui_layout>
+    ┌─────────────────────────────────────────────────────────────────────┐
+    │  🎧 PodcastBrain — 將音頻轉化為知識                                 │
+    │─────────────────────────────────────────────────────────────────────│
+    │  側邊欄：                        主要內容：                          │
+    │  ┌───────────────────┐         ┌─────────────────────────────────┐  │
+    │  │ ● 處理新集數      │         │  [目前頁面內容]                  │  │
+    │  │ ○ 集數媒體庫      │         │                                  │  │
+    │  │ ○ 批次佇列        │         │  媒體庫頁面：                    │  │
+    │  │                   │         │  🔍 [搜尋逐字稿...]              │  │
+    │  │ Whisper 模型：    │         │  日期：[起始] 至 [結束]          │  │
+    │  │ [base ▼]          │         │  時長：[0 ──────── 180] 分鐘    │  │
+    │  │ 語言：            │         │                                  │  │
+    │  │ [自動偵測 ▼]      │         │  [卡片] [卡片] [卡片]            │  │
+    │  │                   │         │  [卡片] [卡片] [卡片]            │  │
+    │  │ 最近集數：        │         └─────────────────────────────────┘  │
+    │  │ • 集數標題 1      │                                              │
+    │  │ • 集數標題 2      │                                              │
+    │  └───────────────────┘                                              │
+    └─────────────────────────────────────────────────────────────────────┘
+
+    集數檢視器（處理完成後或點擊媒體庫卡片後）：
+    ┌──────────────────────────────────────────────────────────────────┐
+    │  集數：「標題」  |  時長：45:23                                  │
+    │──────────────────────────────────────────────────────────────────│
+    │  [摘要] [章節] [逐字稿] [問答]                                   │
+    │  ── 匯出：[📄 MD] [📕 PDF] [💬 SRT] [📝 TXT] [📦 ZIP] ──       │
+    └──────────────────────────────────────────────────────────────────┘
+  </ui_layout>
+
+  <key_interactions>
+    流程 1 — 處理新集數：
+      網址 → 處理 → st.status() 顯示四個步驟 → 集數檢視器含 4 個分頁 + 匯出列。
+
+    流程 2 — 提問：
+      問答分頁 → 輸入問題 → 帶來源引用的有根據回答（在 st.expander 中）。
+
+    流程 3 — 搜尋集數媒體庫：
+      集數媒體庫頁面 → 輸入關鍵字 → FTS5 搜尋所有逐字稿 → 集數卡片
+      帶高亮文字摘錄 → 點擊卡片從資料庫開啟完整集數檢視器。
+
+    流程 4 — 匯出：
+      任一集數 → 下載按鈕列 → 直接透過瀏覽器下載
+      Markdown / PDF / SRT / TXT / ZIP。
+  </key_interactions>
+
+  <implementation_steps>
+    步驟 1 — 專案架構：
+    建立：app.py、downloader.py、transcriber.py、analyzer.py、qa_engine.py、db.py、
+    requirements.txt。
+    db.py：4 個 ORM 模型 + FTS5 虛擬資料表（透過 text() DDL）+ 插入後觸發器。
+    create_all() 後單獨執行 FTS5 DDL。
+
+    步驟 2 — yt-dlp 下載模組：（同 v3）
+
+    步驟 3 — Whisper 轉錄模組：（同 v3）
+
+    步驟 4 — Claude 分析模組：（同 v3，三個獨立函式含重試機制）
+
+    步驟 5 — 問答引擎：（同 v3）
+
+    步驟 6 — 匯出模組：
+    在 app.py 或 export.py 中：export_markdown(episode_id, db)、export_pdf(episode_id, db)、
+    export_srt(episode_id, db)、export_txt(episode_id, db)。
+    SRT：將每個 Whisper 片段格式化為 SRT 區塊（索引、HH:MM:SS,mmm --> HH:MM:SS,mmm、文字）。
+    PDF：reportlab SimpleDocTemplate，含標題、日期、摘要段落、章節清單、引述區、完整逐字稿。
+    ZIP：記憶體中的 zipfile.ZipFile，寫入四種格式，回傳 BytesIO。
+    所有功能在集數檢視器中透過 st.download_button 提供。
+
+    步驟 7 — Streamlit UI：含匯出的集數檢視器：
+    四分頁佈局（摘要、章節、逐字稿、問答）。
+    分頁下方的 5 個 st.download_button 小工具匯出列。
+
+    步驟 8 — Streamlit UI：集數媒體庫：
+    FTS5 查詢：SELECT e.*, snippet(transcripts_fts, 1, '<b>', '</b>', '...', 30)。
+    3 欄格網含集數卡片。date_input 篩選日期範圍。Slider 篩選時長。
+    點擊卡片設置 session_state episode_id 並切換至集數檢視器模式。
+  </implementation_steps>
+
+  <success_criteria>
+    功能性：
+    - 符合所有 v3 的標準
+    - Markdown 匯出下載含摘要、章節、引述、逐字稿的 .md 檔案
+    - PDF 匯出下載含集數標題和摘要的非空 .pdf 檔案
+    - SRT 匯出下載格式為 00:00:00,000 的有效 .srt 檔案
+    - ZIP 匯出下載包含四種格式的壓縮檔
+    - 集數媒體庫搜尋能找到逐字稿中含關鍵字的集數
+    - 搜尋文字摘錄顯示比對詞彙周圍的高亮上下文
+    - 日期範圍和時長篩選能正確縮小搜尋結果範圍
+    - 點擊媒體庫卡片能從資料庫開啟完整集數檢視器，無需重新處理
+
+    技術品質：
+    - 啟動時建立 FTS5 虛擬資料表
+    - FTS5 觸發器能正確自動索引新逐字稿
+    - SRT 時間戳記嚴格遵循 HH:MM:SS,mmm 格式
+    - PDF 匯出使用 reportlab（非 fpdf 或 weasyprint）
+    - 匯出函式可獨立測試
+    - 媒體庫 FTS5 查詢使用 snippet() 函式提供高亮摘錄
+  </success_criteria>
+</project_specification>

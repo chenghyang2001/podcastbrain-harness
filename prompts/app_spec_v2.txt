@@ -1,0 +1,209 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project_specification version="v2">
+  <project_name>PodcastBrain — v2: Download + Transcribe + Chapters</project_name>
+
+  <overview>
+    PodcastBrain v2 extends the MVP downloader with local Whisper transcription and
+    Claude-powered chapter detection. A user can paste a YouTube URL, download the audio,
+    have it transcribed entirely on-device (no audio sent externally), and then let Claude
+    parse the transcript into labeled chapters with timestamps. Results are displayed in a
+    two-tab episode viewer: Transcript and Chapters. A minimal SQLite database persists
+    episodes between sessions so the user does not need to re-process a URL they already
+    submitted.
+  </overview>
+
+  <feature_list>
+    [
+      {
+        "id": 1,
+        "name": "Audio Input",
+        "description": "URL input (YouTube + direct links) with yt-dlp download and live progress bar. File upload (.mp3/.m4a/.wav) also supported."
+      },
+      {
+        "id": 2,
+        "name": "Local Whisper Transcription",
+        "description": "Model selection (tiny/base/small/medium/large). On-device transcription with full text and timestamped segments stored in DB."
+      },
+      {
+        "id": 3,
+        "name": "Claude Chapter Detection",
+        "description": "Claude receives full transcript text and returns JSON array of chapters with title, start_seconds, end_seconds, and summary."
+      }
+    ]
+  </feature_list>
+
+  <technology_stack>
+    <api_key>
+      ANTHROPIC_API_KEY environment variable must be set (required for Claude chapter detection).
+      Load with: api_key = os.environ["ANTHROPIC_API_KEY"]
+    </api_key>
+    <web_framework>
+      <name>Streamlit</name>
+      <port>8501</port>
+      <notes>Two pages: Process New (sidebar nav) and a simple episode list.
+      Episode Viewer uses tabs: Transcript / Chapters.</notes>
+    </web_framework>
+    <language>Python 3.11+</language>
+    <download>yt-dlp — subprocess wrapper with stdout progress parsing</download>
+    <transcription>openai-whisper — local transcription, model selection dropdown</transcription>
+    <ai>Anthropic Claude claude-sonnet-4-6 — chapter detection only</ai>
+    <database>SQLite via SQLAlchemy 2.x — 3 tables: episodes, transcripts, chapters</database>
+    <dependencies>
+      streamlit, yt-dlp, openai-whisper, anthropic, sqlalchemy, ffmpeg-python
+    </dependencies>
+  </technology_stack>
+
+  <prerequisites>
+    <environment_setup>
+      - ANTHROPIC_API_KEY environment variable must be set
+      - Python 3.11+ installed
+      - ffmpeg must be installed and accessible in PATH
+      - yt-dlp installed (pip install yt-dlp)
+      - openai-whisper installed (pip install openai-whisper)
+      - First Whisper run downloads the selected model (~75MB for tiny, ~1.5GB for large)
+      - SQLite FTS5 not required in v2
+    </environment_setup>
+  </prerequisites>
+
+  <core_features>
+    1. Audio Input — URL text input (YouTube watch URLs, direct MP3/M4A/WAV links) and
+       file upload widget (.mp3, .m4a, .wav). yt-dlp downloads audio to temp directory.
+       Progress bar updated from yt-dlp stdout parsing. Cancel button terminates subprocess.
+       Returns: {file_path, title, duration_secs}.
+
+    2. Local Whisper Transcription — Model selection dropdown (tiny/base/small/medium/large)
+       with estimated time note per model. Whisper called via Python API:
+       import whisper; model = whisper.load_model(model_name);
+       result = model.transcribe(audio_path).
+       Extracts: result["text"] (full transcript) and result["segments"] (start/end/text).
+       Stores both in DB. Language auto-detected. Progress estimated from elapsed time vs
+       audio duration.
+
+    3. Claude Chapter Detection — Claude receives full transcript text and returns JSON array:
+       [{title, start_seconds, end_seconds, summary}, ...].
+       Validates JSON structure. Fallback to single chapter if parsing fails or
+       audio duration less than 300 seconds. Chapters stored in DB and displayed
+       as a simple chapter list with MM:SS timestamps.
+  </core_features>
+
+  <database_schema>
+    -- Primary episode record
+    CREATE TABLE episodes (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        title TEXT,
+        source_url TEXT NOT NULL,
+        source_type TEXT CHECK(source_type IN ('youtube','direct_url','file_upload')),
+        audio_path TEXT,
+        duration_secs INTEGER,
+        whisper_model TEXT,
+        language TEXT DEFAULT 'en',
+        status TEXT CHECK(status IN ('queued','downloading','transcribing','analyzing','complete','failed')),
+        error_message TEXT,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        processed_at TIMESTAMP
+    );
+
+    -- Full transcript with segment-level timestamps
+    CREATE TABLE transcripts (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        episode_id INTEGER NOT NULL REFERENCES episodes(id) ON DELETE CASCADE,
+        full_text TEXT NOT NULL,
+        segments TEXT,        -- JSON array: [{start, end, text}, ...]
+        word_count INTEGER,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    );
+
+    -- Chapter markers from Claude analysis
+    CREATE TABLE chapters (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        episode_id INTEGER NOT NULL REFERENCES episodes(id) ON DELETE CASCADE,
+        title TEXT NOT NULL,
+        start_seconds INTEGER NOT NULL,
+        end_seconds INTEGER,
+        summary TEXT,
+        sort_order INTEGER NOT NULL
+    );
+  </database_schema>
+
+  <api_endpoints_summary>
+    Not applicable — Streamlit-only, no REST API.
+    Claude API called from analyzer.py. yt-dlp and Whisper run as subprocesses.
+  </api_endpoints_summary>
+
+  <ui_layout>
+    ┌────────────────────────────────────────────────────────────────┐
+    │  🎧 PodcastBrain                                               │
+    │────────────────────────────────────────────────────────────────│
+    │  Sidebar:              Main Content:                           │
+    │  ┌──────────────┐      ┌───────────────────────────────────┐  │
+    │  │ ● Process New│      │  URL Input or File Upload         │  │
+    │  │ ○ My Episodes│      │  [_____________________________]  │  │
+    │  │              │      │  [Process Episode]                │  │
+    │  │ Whisper:     │      │                                   │  │
+    │  │ [base ▼]     │      │  ▓▓▓▓▓▓░░░░ Transcribing...      │  │
+    │  └──────────────┘      │                                   │  │
+    │                        │  Episode Viewer (after done):     │  │
+    │                        │  [Transcript]  [Chapters]         │  │
+    │                        └───────────────────────────────────┘  │
+    └────────────────────────────────────────────────────────────────┘
+  </ui_layout>
+
+  <key_interactions>
+    Flow 1 — Process a new episode:
+      User pastes URL + selects Whisper model → clicks "Process Episode" →
+      st.status() shows live steps: "Downloading...", "Transcribing...", "Detecting chapters..."
+      → Episode Viewer appears with Transcript and Chapters tabs.
+
+    Flow 2 — View past episodes:
+      User clicks "My Episodes" in sidebar → list of previously processed episodes →
+      click any episode to open its Episode Viewer from DB (no re-processing).
+  </key_interactions>
+
+  <implementation_steps>
+    Step 1 — Project Scaffold:
+    Create: podcastbrain/app.py, downloader.py, transcriber.py, analyzer.py, db.py,
+    requirements.txt.
+    Implement db.py: SQLAlchemy engine, Episode/Transcript/Chapter ORM models, create_all().
+
+    Step 2 — yt-dlp Download Module:
+    downloader.py: download_audio(url, output_dir). Subprocess call with progress parsing.
+    Cancel support via process.terminate(). Returns {file_path, title, duration_secs}.
+
+    Step 3 — Whisper Transcription Module:
+    transcriber.py: transcribe_audio(audio_path, model_name, language).
+    Python API call. Returns {full_text, segments, word_count, language_detected}.
+    Handle model load failure and unsupported formats.
+
+    Step 4 — Claude Chapter Detection Module:
+    analyzer.py: generate_chapters(transcript_text, duration_secs, api_key).
+    System prompt instructs Claude to return JSON array only.
+    Validate JSON structure. Retry up to 3 times on failure. Fallback to single chapter.
+
+    Step 5 — Streamlit UI: Input and Processing:
+    Process New page: URL text_input + file uploader. "Process Episode" button.
+    Sequential execution: download → transcribe → chapters → update DB status.
+    Use st.status() container for live step messages.
+
+    Step 6 — Streamlit UI: Episode Viewer:
+    Two-tab layout: Transcript (scrollable full text with timestamps) and Chapters
+    (list of chapter cards showing title, MM:SS range, summary).
+    My Episodes page: simple list of episode titles with processed dates, clickable.
+  </implementation_steps>
+
+  <success_criteria>
+    Functional:
+    - App loads at http://localhost:8501
+    - YouTube URL processes end-to-end: download → transcribe → chapters visible
+    - Transcript tab shows full text with timestamps
+    - Chapters tab shows at least 1 chapter with title and timestamp
+    - Previously processed episodes appear in "My Episodes" and can be reopened
+    - Invalid URL shows a readable error (not a Python traceback)
+
+    Technical Quality:
+    - SQLite DB created at startup with correct tables
+    - Whisper called with correct model name and returns segments with timestamps
+    - Claude receives only text (never audio binary data)
+    - generate_chapters() in analyzer.py with retry and JSON fallback
+    - Claude API key read from environment variable, never hardcoded
+  </success_criteria>
+</project_specification>

@@ -1,0 +1,128 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project_specification version="v1-mvp">
+  <project_name>PodcastBrain — MVP：音訊下載器</project_name>
+
+  <overview>
+    PodcastBrain v1 是絕對最小可行產品：一個 Streamlit 網頁應用程式，
+    接受 YouTube URL 或直接音訊連結，並使用 yt-dlp 將音訊檔案下載到
+    本地目錄。使用者可以即時看到下載進度，完成後取得儲存的檔案路徑。
+    無轉錄、無 AI 分析、無資料庫。
+    唯一目標是在疊加任何智慧功能之前，先驗證音訊擷取能可靠運作。
+  </overview>
+
+  <feature_list>
+    [
+      {
+        "id": 1,
+        "name": "音訊輸入",
+        "description": "URL 輸入欄位（YouTube watch URL、直接 MP3/M4A 連結），搭配 yt-dlp 下載及即時進度條。"
+      }
+    ]
+  </feature_list>
+
+  <technology_stack>
+    <api_key>v1 不需要。</api_key>
+    <web_framework>
+      <name>Streamlit</name>
+      <port>8501</port>
+      <notes>單頁 Streamlit 應用程式，不需要側邊欄導覽。</notes>
+    </web_framework>
+    <language>Python 3.11+</language>
+    <download>yt-dlp — 帶有 stdout 進度解析的 subprocess 包裝器</download>
+    <transcription>v1 不包含。</transcription>
+    <ai>v1 不包含。</ai>
+    <database>v1 不包含。下載的檔案儲存於 ./downloads/ 目錄。</database>
+    <dependencies>
+      streamlit, yt-dlp, ffmpeg-python
+    </dependencies>
+  </technology_stack>
+
+  <prerequisites>
+    <environment_setup>
+      - 已安裝 Python 3.11+
+      - ffmpeg 必須已安裝且可在 PATH 中存取
+        安裝方式：sudo apt-get install ffmpeg  (Ubuntu/Debian)
+      - 已安裝 yt-dlp（pip install yt-dlp）
+      - ./downloads/ 目錄具有寫入權限
+    </environment_setup>
+  </prerequisites>
+
+  <core_features>
+    1. 音訊輸入 — URL 文字輸入（YouTube watch URL、直接 MP3/M4A/WAV 連結）。
+       「Download Audio」按鈕觸發 yt-dlp subprocess。進度條從
+       yt-dlp stdout 解析更新（regex：r'\[download\]\s+(\d+\.\d+)%'）。取消按鈕
+       終止 subprocess。成功時顯示儲存的檔案路徑與檔案大小。
+       失敗時顯示 yt-dlp 錯誤訊息。檔案以從影片標題衍生的
+       清理後檔名儲存至 ./downloads/。音訊不會離開本機。
+  </core_features>
+
+  <database_schema>
+    v1 不適用。檔案直接儲存至 ./downloads/ 目錄。
+    session 之間無持久狀態。
+  </database_schema>
+
+  <api_endpoints_summary>
+    不適用 — 僅 Streamlit，無 REST API。
+    yt-dlp 以 subprocess 方式從 downloader.py 呼叫。
+  </api_endpoints_summary>
+
+  <ui_layout>
+    ┌─────────────────────────────────────────────────────────┐
+    │  🎧 PodcastBrain — Download Audio                       │
+    │─────────────────────────────────────────────────────────│
+    │  輸入 YouTube URL 或直接音訊連結：                       │
+    │  [________________________________________________]     │
+    │  [Download Audio]  [Cancel]                             │
+    │                                                         │
+    │  ▓▓▓▓▓░░░░░  47% — 下載中...                           │
+    │                                                         │
+    │  ✅ 已儲存至：./downloads/my-episode.mp3 (42.3 MB)      │
+    └─────────────────────────────────────────────────────────┘
+  </ui_layout>
+
+  <key_interactions>
+    流程 1 — 下載 YouTube 集數：
+      使用者貼上 YouTube URL → 點擊「Download Audio」→ 進度條隨
+      yt-dlp 下載即時更新 → 完成訊息顯示儲存的檔案路徑與大小。
+
+    流程 2 — 下載中途取消：
+      使用者點擊「Cancel」→ yt-dlp subprocess 終止 → 部分檔案刪除
+      → UI 重置至輸入狀態。
+  </key_interactions>
+
+  <implementation_steps>
+    步驟 1 — 專案骨架：
+    建立目錄結構：podcastbrain/app.py、downloader.py、requirements.txt。
+    若不存在則建立 ./downloads/ 目錄。
+
+    步驟 2 — yt-dlp 下載模組：
+    實作 downloader.py，包含 download_audio(url, output_dir) 函式。
+    使用 subprocess 呼叫 yt-dlp，參數為：--format bestaudio、--extract-audio、
+    --audio-format mp3、--progress、--output template。
+    從 stdout 行解析進度百分比（regex：r'\[download\]\s+(\d+\.\d+)%'）。
+    透過 st.session_state 共享值更新 Streamlit 進度條。
+    使用 process.terminate() 實作 cancel_download(pid)。
+    處理：網路錯誤、私人影片、無效 URL。
+    成功時回傳：{file_path, title, file_size_mb}，失敗時拋出例外。
+
+    步驟 3 — Streamlit UI：
+    單頁 app.py。URL text_input。「Download Audio」按鈕在背景執行緒中
+    啟動 subprocess 並透過 st.progress() 輪詢進度。「Cancel」按鈕設定
+    session_state 旗標以終止程序。完成時顯示成功或錯誤訊息。
+  </implementation_steps>
+
+  <success_criteria>
+    功能性：
+    - 應用程式在 http://localhost:8501 無錯誤載入
+    - 貼上有效的 YouTube URL 並點擊 Download 啟動程序
+    - 下載期間進度條從 0% 遞增至 100%
+    - 完成後檔案出現在 ./downloads/ 目錄
+    - 無效 URL 顯示可讀的錯誤訊息（非 Python traceback）
+    - 取消按鈕停止下載並清理部分檔案
+
+    技術品質：
+    - 取消時 yt-dlp subprocess 能乾淨地終止
+    - 無硬編碼路徑（使用 Path.cwd() / "downloads"）
+    - 進度解析能優雅地處理 yt-dlp 輸出格式的變化
+  </success_criteria>
+</project_specification>

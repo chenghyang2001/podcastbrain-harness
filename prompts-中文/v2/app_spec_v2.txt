@@ -1,0 +1,206 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project_specification version="v2">
+  <project_name>PodcastBrain — v2：下載 + 轉錄 + 章節偵測</project_name>
+
+  <overview>
+    PodcastBrain v2 在 MVP 下載器的基礎上，新增了本機 Whisper 轉錄功能與
+    Claude 驅動的章節偵測功能。使用者可以貼上 YouTube URL，下載音訊，
+    完全在本機完成轉錄（不向外部傳送音訊），再讓 Claude 將逐字稿解析成
+    附有時間戳記的有標題章節。結果顯示在一個兩分頁的單集檢視器中：逐字稿與章節。
+    一個簡易的 SQLite 資料庫可在工作階段之間保留單集資料，使用者無需重新處理
+    已提交過的 URL。
+  </overview>
+
+  <feature_list>
+    [
+      {
+        "id": 1,
+        "name": "Audio Input",
+        "description": "URL 輸入（YouTube 與直連連結）搭配 yt-dlp 下載及即時進度條。同時支援檔案上傳（.mp3/.m4a/.wav）。"
+      },
+      {
+        "id": 2,
+        "name": "Local Whisper Transcription",
+        "description": "模型選擇（tiny/base/small/medium/large）。在裝置上完成轉錄，完整文字與附時間戳記的片段均儲存至資料庫。"
+      },
+      {
+        "id": 3,
+        "name": "Claude Chapter Detection",
+        "description": "Claude 接收完整逐字稿文字，回傳包含 title、start_seconds、end_seconds 及 summary 的 JSON 陣列章節清單。"
+      }
+    ]
+  </feature_list>
+
+  <technology_stack>
+    <api_key>
+      必須設定 ANTHROPIC_API_KEY 環境變數（Claude 章節偵測所必需）。
+      載入方式：api_key = os.environ["ANTHROPIC_API_KEY"]
+    </api_key>
+    <web_framework>
+      <name>Streamlit</name>
+      <port>8501</port>
+      <notes>兩個頁面：透過側邊欄導覽的「處理新單集」頁面，以及一個簡易單集清單頁面。
+      單集檢視器使用分頁：逐字稿 / 章節。</notes>
+    </web_framework>
+    <language>Python 3.11+</language>
+    <download>yt-dlp — 以 subprocess 包裝並解析 stdout 進度</download>
+    <transcription>openai-whisper — 本機轉錄，提供模型選擇下拉選單</transcription>
+    <ai>Anthropic Claude claude-sonnet-4-6 — 僅用於章節偵測</ai>
+    <database>SQLite via SQLAlchemy 2.x — 3 張資料表：episodes、transcripts、chapters</database>
+    <dependencies>
+      streamlit, yt-dlp, openai-whisper, anthropic, sqlalchemy, ffmpeg-python
+    </dependencies>
+  </technology_stack>
+
+  <prerequisites>
+    <environment_setup>
+      - 必須設定 ANTHROPIC_API_KEY 環境變數
+      - 需安裝 Python 3.11+
+      - ffmpeg 必須已安裝且可在 PATH 中存取
+      - 需安裝 yt-dlp（pip install yt-dlp）
+      - 需安裝 openai-whisper（pip install openai-whisper）
+      - 首次執行 Whisper 時會下載所選模型（tiny 約 75MB，large 約 1.5GB）
+      - v2 不需要 SQLite FTS5
+    </environment_setup>
+  </prerequisites>
+
+  <core_features>
+    1. 音訊輸入 — URL 文字輸入（YouTube 觀看網址、MP3/M4A/WAV 直連連結）以及
+       檔案上傳元件（.mp3、.m4a、.wav）。yt-dlp 將音訊下載至暫存目錄。
+       進度條由解析 yt-dlp stdout 更新。取消按鈕可終止子程序。
+       回傳：{file_path, title, duration_secs}。
+
+    2. 本機 Whisper 轉錄 — 模型選擇下拉選單（tiny/base/small/medium/large），
+       每個模型附有預估時間說明。透過 Python API 呼叫 Whisper：
+       import whisper; model = whisper.load_model(model_name);
+       result = model.transcribe(audio_path)。
+       擷取：result["text"]（完整逐字稿）與 result["segments"]（含 start/end/text）。
+       兩者均儲存至資料庫。語言自動偵測。進度依已用時間與音訊時長估算。
+
+    3. Claude 章節偵測 — Claude 接收完整逐字稿文字，回傳 JSON 陣列：
+       [{title, start_seconds, end_seconds, summary}, ...]。
+       驗證 JSON 結構。若解析失敗或音訊時長不足 300 秒，則退回為單一章節。
+       章節儲存至資料庫，並以簡易章節清單搭配 MM:SS 時間戳記顯示。
+  </core_features>
+
+  <database_schema>
+    -- 主要單集記錄
+    CREATE TABLE episodes (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        title TEXT,
+        source_url TEXT NOT NULL,
+        source_type TEXT CHECK(source_type IN ('youtube','direct_url','file_upload')),
+        audio_path TEXT,
+        duration_secs INTEGER,
+        whisper_model TEXT,
+        language TEXT DEFAULT 'en',
+        status TEXT CHECK(status IN ('queued','downloading','transcribing','analyzing','complete','failed')),
+        error_message TEXT,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        processed_at TIMESTAMP
+    );
+
+    -- 含片段層級時間戳記的完整逐字稿
+    CREATE TABLE transcripts (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        episode_id INTEGER NOT NULL REFERENCES episodes(id) ON DELETE CASCADE,
+        full_text TEXT NOT NULL,
+        segments TEXT,        -- JSON array: [{start, end, text}, ...]
+        word_count INTEGER,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    );
+
+    -- 由 Claude 分析產生的章節標記
+    CREATE TABLE chapters (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        episode_id INTEGER NOT NULL REFERENCES episodes(id) ON DELETE CASCADE,
+        title TEXT NOT NULL,
+        start_seconds INTEGER NOT NULL,
+        end_seconds INTEGER,
+        summary TEXT,
+        sort_order INTEGER NOT NULL
+    );
+  </database_schema>
+
+  <api_endpoints_summary>
+    不適用 — 僅使用 Streamlit，無 REST API。
+    Claude API 從 analyzer.py 呼叫。yt-dlp 與 Whisper 以子程序方式執行。
+  </api_endpoints_summary>
+
+  <ui_layout>
+    ┌────────────────────────────────────────────────────────────────┐
+    │  🎧 PodcastBrain                                               │
+    │────────────────────────────────────────────────────────────────│
+    │  側邊欄：               主要內容：                              │
+    │  ┌──────────────┐      ┌───────────────────────────────────┐  │
+    │  │ ● 處理新單集 │      │  URL 輸入或檔案上傳               │  │
+    │  │ ○ 我的單集   │      │  [_____________________________]  │  │
+    │  │              │      │  [Process Episode]                │  │
+    │  │ Whisper:     │      │                                   │  │
+    │  │ [base ▼]     │      │  ▓▓▓▓▓▓░░░░ 轉錄中...            │  │
+    │  └──────────────┘      │                                   │  │
+    │                        │  單集檢視器（完成後顯示）：        │  │
+    │                        │  [逐字稿]  [章節]                 │  │
+    │                        └───────────────────────────────────┘  │
+    └────────────────────────────────────────────────────────────────┘
+  </ui_layout>
+
+  <key_interactions>
+    流程 1 — 處理新單集：
+      使用者貼上 URL 並選擇 Whisper 模型 → 點擊「Process Episode」→
+      st.status() 顯示即時步驟：「下載中...」、「轉錄中...」、「偵測章節中...」
+      → 單集檢視器出現，顯示逐字稿與章節分頁。
+
+    流程 2 — 檢視過往單集：
+      使用者點擊側邊欄的「我的單集」→ 已處理單集清單 →
+      點擊任一單集，即可從資料庫開啟其單集檢視器（無需重新處理）。
+  </key_interactions>
+
+  <implementation_steps>
+    步驟 1 — 專案骨架：
+    建立：podcastbrain/app.py、downloader.py、transcriber.py、analyzer.py、db.py、
+    requirements.txt。
+    實作 db.py：SQLAlchemy 引擎、Episode/Transcript/Chapter ORM 模型、create_all()。
+
+    步驟 2 — yt-dlp 下載模組：
+    downloader.py：download_audio(url, output_dir)。帶進度解析的子程序呼叫。
+    透過 process.terminate() 支援取消。回傳 {file_path, title, duration_secs}。
+
+    步驟 3 — Whisper 轉錄模組：
+    transcriber.py：transcribe_audio(audio_path, model_name, language)。
+    Python API 呼叫。回傳 {full_text, segments, word_count, language_detected}。
+    處理模型載入失敗與不支援的格式。
+
+    步驟 4 — Claude 章節偵測模組：
+    analyzer.py：generate_chapters(transcript_text, duration_secs, api_key)。
+    系統提示詞指示 Claude 僅回傳 JSON 陣列。
+    驗證 JSON 結構。失敗時最多重試 3 次。退回為單一章節。
+
+    步驟 5 — Streamlit UI：輸入與處理：
+    「處理新單集」頁面：URL text_input + 檔案上傳器。「Process Episode」按鈕。
+    循序執行：下載 → 轉錄 → 章節偵測 → 更新資料庫狀態。
+    使用 st.status() 容器顯示即時步驟訊息。
+
+    步驟 6 — Streamlit UI：單集檢視器：
+    兩分頁佈局：逐字稿（可捲動的附時間戳記完整文字）與章節
+    （顯示標題、MM:SS 時間範圍、摘要的章節卡片清單）。
+    「我的單集」頁面：簡易的單集標題與處理日期清單，可點擊。
+  </implementation_steps>
+
+  <success_criteria>
+    功能面：
+    - 應用程式在 http://localhost:8501 正常載入
+    - YouTube URL 完整執行端對端流程：下載 → 轉錄 → 可見章節
+    - 逐字稿分頁顯示含時間戳記的完整文字
+    - 章節分頁顯示至少 1 個含標題與時間戳記的章節
+    - 已處理的單集出現在「我的單集」中且可重新開啟
+    - 無效 URL 顯示可讀的錯誤訊息（而非 Python traceback）
+
+    技術品質：
+    - SQLite 資料庫在啟動時以正確的資料表建立完成
+    - Whisper 以正確的模型名稱呼叫，並回傳含時間戳記的片段
+    - Claude 僅接收文字（絕不傳送音訊二進位資料）
+    - analyzer.py 中的 generate_chapters() 具備重試與 JSON 退回機制
+    - Claude API 金鑰從環境變數讀取，絕不硬編碼
+  </success_criteria>
+</project_specification>

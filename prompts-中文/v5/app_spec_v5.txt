@@ -1,0 +1,373 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project_specification version="v5">
+  <project_name>PodcastBrain — v5：完整功能集（準最終版）</project_name>
+
+  <overview>
+    PodcastBrain v5 是完整的準最終版規格，在 v4 的基礎上新增最後一項主要
+    功能——批次處理佇列（Batch Processing Queue）。使用者現在可以一次貼入
+    多個 URL（每行一個）進入批次佇列，應用程式會依序處理這些 URL，並以
+    即時狀態表格顯示每個節目在「下載 → 轉錄 → 分析」流程中的進度。
+    佇列狀態會持久化到 SQLite，因此重新載入頁面不會遺失排隊中的任務。
+    當批次處理完成時，可透過 smtplib 發送可選的電子郵件通知。
+    Plotly 渲染的章節時間軸視覺化圖表已新增至「章節」分頁。
+    本版本功能完整，與最終版 app_spec.txt 的功能覆蓋範圍相同，
+    差異僅在於提供給自主程式碼代理的實作細節層級與複雜度指引。
+  </overview>
+
+  <feature_list>
+    [
+      {
+        "id": 1,
+        "name": "音訊輸入",
+        "description": "URL 輸入（YouTube 及直連連結）與檔案上傳（.mp3/.m4a/.wav），使用 yt-dlp 下載並顯示即時進度條。取消按鈕可終止子程序。"
+      },
+      {
+        "id": 2,
+        "name": "本地 Whisper 轉錄",
+        "description": "裝置端轉錄，可選擇模型（tiny/base/small/medium/large）。完整文字與帶時間戳的片段儲存於資料庫中。語言可自動偵測或由使用者指定。"
+      },
+      {
+        "id": 3,
+        "name": "Claude 章節偵測",
+        "description": "Claude 偵測章節並回傳 [{title, start_seconds, end_seconds, summary}] JSON。驗證後重試 3 次，對短集數退回單一章節作為備援。"
+      },
+      {
+        "id": 4,
+        "name": "Claude 完整分析",
+        "description": "三次獨立的 Claude 呼叫：(a) 3-5 段摘要 + 重要引言 + 行動事項，(b) 說話者辨識。以 JSON 格式儲存於 episodes 資料表中。支援指數退避重試。"
+      },
+      {
+        "id": 5,
+        "name": "向節目提問（Q&A）",
+        "description": "基於關鍵字的片段檢索，將前 10 個相關段落提供給 Claude。答案嚴格基於逐字稿。來源引用顯示於 st.expander 中。問答記錄儲存於資料庫。"
+      },
+      {
+        "id": 6,
+        "name": "匯出選項",
+        "description": "Markdown（.md）、PDF（reportlab）、SRT 字幕檔、純文字 TXT、所有格式的 ZIP 壓縮檔。全部透過 st.download_button 提供下載。"
+      },
+      {
+        "id": 7,
+        "name": "附搜尋功能的節目資料庫",
+        "description": "跨所有逐字稿的 FTS5 全文搜尋。日期範圍與時長篩選。三欄式節目卡片網格，附片段高亮。點擊可開啟節目檢視器。"
+      },
+      {
+        "id": 8,
+        "name": "批次處理佇列",
+        "description": "多 URL 文字區域輸入。依序處理，即時狀態表格顯示（queued/downloading/transcribing/analyzing/complete/failed）。佇列持久化於 SQLite 中。批次完成後可選擇寄送電子郵件通知。"
+      }
+    ]
+  </feature_list>
+
+  <technology_stack>
+    <api_key>
+      您可以使用位於 /tmp/api-key 的 API 金鑰進行測試。您將無法讀取此檔案，
+      但可以在程式碼中引用它。載入方式：
+        with open("/tmp/api-key") as f:
+            api_key = f.read().strip()
+      或透過環境變數 ANTHROPIC_API_KEY。
+    </api_key>
+    <web_framework>
+      <name>Streamlit</name>
+      <port>Streamlit 儀表板在 port 8501 執行</port>
+      <notes>三個導覽頁面：Process New / Episode Library / Batch Queue。
+      使用 Streamlit 原生側邊欄導覽的多頁面佈局。
+      節目檢視器：Summary、Chapters、Transcript、Q&amp;A 分頁 + 匯出列。</notes>
+    </web_framework>
+    <language>Python 3.11+</language>
+    <download>yt-dlp — 用於 YouTube 與直連音訊 URL 下載的子程序包裝器，含進度解析</download>
+    <transcription>openai-whisper — 本地轉錄，無需外部 API 金鑰，可選擇模型（tiny/base/small/medium/large）</transcription>
+    <ai>Anthropic Claude claude-sonnet-4-6 — 章節偵測、摘要生成、Q&amp;A 回答</ai>
+    <database>透過 SQLAlchemy 2.x 使用 SQLite — 4 個資料表 + FTS5 虛擬資料表以支援全文搜尋</database>
+    <audio>pydub — 音訊時長偵測，必要時進行格式轉換</audio>
+    <pdf_export>reportlab — 節目筆記與逐字稿的 PDF 匯出</pdf_export>
+    <visualization>plotly — 章節分頁中章節時間軸的水平長條圖</visualization>
+    <dependencies>
+      streamlit, yt-dlp, openai-whisper, anthropic, sqlalchemy, pydub, reportlab, plotly, ffmpeg-python
+    </dependencies>
+  </technology_stack>
+
+  <prerequisites>
+    <environment_setup>
+      - 必須設定 ANTHROPIC_API_KEY 環境變數（或存在 /tmp/api-key 檔案）
+      - 已安裝 Python 3.11+
+      - ffmpeg 必須已安裝並可在 PATH 中存取（yt-dlp 與 Whisper 都需要）
+        安裝方式：sudo apt-get install ffmpeg（Ubuntu/Debian）
+      - 已安裝 yt-dlp（pip install yt-dlp）
+      - 已安裝 openai-whisper（pip install openai-whisper）
+      - 首次執行 Whisper 時會下載所選模型（tiny 約 75MB，large 約 1.5GB）
+      - SQLite FTS5 必須已啟用（Python 3.5+ 標準組建中預設啟用）
+      - 足夠的磁碟空間：每小時音訊約需 500MB 暫存檔案
+      - 電子郵件通知需要：環境變數中的 SMTP 憑證（SMTP_HOST、SMTP_USER、SMTP_PASS）
+    </environment_setup>
+  </prerequisites>
+
+  <core_features>
+    1. 音訊輸入 — URL 文字輸入（YouTube 觀看 URL、直連 MP3/M4A/WAV 連結）與檔案上傳
+       小工具（.mp3、.m4a、.wav、.ogg）。yt-dlp 將音訊下載至暫存目錄。進度條
+       透過解析 yt-dlp stdout 更新。取消按鈕可終止子程序。
+
+    2. 本地 Whisper 轉錄 — 模型選擇下拉選單（tiny/base/small/medium/large），附每個
+       模型的預估時間與準確度說明。Whisper 透過 Python API 呼叫：
+       import whisper; model = whisper.load_model(model_name);
+       result = model.transcribe(audio_path, language=language)。
+       提取：result["text"]（完整逐字稿）、result["segments"]（含 start/end/text 的清單）。
+       根據音訊時長與已用時間估算進度。
+       處理：找不到檔案、不支援的格式、模型下載失敗、CUDA/CPU 選擇。
+
+    3. Claude 章節偵測 — Claude 接收完整逐字稿文字並回傳 JSON 陣列：
+       [{title, start_seconds, end_seconds, summary}, ...]。驗證 JSON 結構。
+       短集數（不足 5 分鐘）的退回方案：涵蓋完整時長的單一章節。指數退避重試 3 次。
+       章節儲存於資料庫並以可點擊的時間軸顯示。
+
+    4. Claude 完整分析 — 三次獨立的 Claude API 呼叫：
+       (a) generate_summary_quotes_actions(transcript_text, api_key) — 回傳 JSON，包含：
+           summary（3-5 段含關鍵主題的摘要）、quotes（{text, speaker, timestamp_seconds} 陣列）、
+           action_items（具體後續步驟的編號清單）。
+       (b) identify_speakers(transcript_text, api_key) — 回傳含說話者標籤的 JSON。
+       所有呼叫使用重試邏輯（3 次，指數退避）。將合併結果以 JSON 格式儲存
+       於 episodes.claude_analysis 欄位中。
+
+    5. 向節目提問 Q&amp;A — 基於關鍵字的片段檢索找到相關的逐字稿部分。
+       Claude 嚴格依據檢索到的片段回答——「僅引用逐字稿」系統提示。
+       引用模式顯示使用的確切逐字稿段落。Q&amp;A 記錄依節目儲存於資料庫。
+       使用 st.chat_input 與可捲動的 st.chat_message 歷史記錄呈現聊天介面。
+
+    6. 匯出選項 — Markdown（.md）含完整結構（摘要、章節、引言、逐字稿），
+       PDF（reportlab，含章節標頭格式）、SRT 字幕檔（來自 Whisper 片段）、
+       純文字 TXT（僅逐字稿）、包含所有格式的 ZIP 壓縮檔。全部透過 st.download_button 提供。
+
+    7. 附搜尋功能的節目資料庫 — 透過 st.text_input 對所有節目逐字稿進行 FTS5 全文搜尋。
+       以日期範圍（st.date_input）與時長範圍（st.slider，0-180 分鐘）篩選。
+       節目卡片網格（3 欄），含縮圖、標題、時長、處理日期。點擊卡片
+       開啟節目檢視器。snippet() 函式在搜尋結果中提供高亮摘錄。
+
+    8. 批次處理佇列 — 透過 st.text_area（每行一個 URL）將多個 URL 加入佇列。
+       「Add to Queue」按鈕插入 status='queued' 的 Episode 記錄。依序處理
+       （一次一個，避免資源競爭）。狀態表格顯示：url、title、status、
+       progress、eta。狀態值：queued/downloading/transcribing/analyzing/complete/failed。
+       使用 st.empty() + st.rerun() 每 5 秒自動重新整理表格。批次完成時
+       可透過 smtplib 選擇性發送電子郵件通知。佇列透過 SQLite 跨頁面重新載入持久化
+       （episodes 資料表的 status 欄位）。
+  </core_features>
+
+  <database_schema>
+    -- 主要節目記錄
+    CREATE TABLE episodes (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        title TEXT,
+        source_url TEXT NOT NULL,
+        source_type TEXT CHECK(source_type IN ('youtube','direct_url','file_upload')),
+        audio_path TEXT,                  -- 已下載音訊檔案的暫存路徑
+        duration_secs INTEGER,
+        whisper_model TEXT,               -- 例如 'base', 'small'
+        language TEXT DEFAULT 'en',
+        status TEXT CHECK(status IN ('queued','downloading','transcribing','analyzing','complete','failed')),
+        error_message TEXT,
+        claude_analysis TEXT,             -- JSON: {summary, quotes, action_items, speakers}
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        processed_at TIMESTAMP
+    );
+
+    -- 含片段級時間戳的完整逐字稿
+    CREATE TABLE transcripts (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        episode_id INTEGER NOT NULL REFERENCES episodes(id) ON DELETE CASCADE,
+        full_text TEXT NOT NULL,
+        segments TEXT,                    -- JSON 陣列：[{start, end, text}, ...]
+        word_count INTEGER,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    );
+
+    -- 來自 Claude 分析的章節標記
+    CREATE TABLE chapters (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        episode_id INTEGER NOT NULL REFERENCES episodes(id) ON DELETE CASCADE,
+        title TEXT NOT NULL,
+        start_seconds INTEGER NOT NULL,
+        end_seconds INTEGER,
+        summary TEXT,
+        sort_order INTEGER NOT NULL
+    );
+
+    -- 每個節目的 Q&A 互動記錄
+    CREATE TABLE qa_history (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        episode_id INTEGER NOT NULL REFERENCES episodes(id) ON DELETE CASCADE,
+        question TEXT NOT NULL,
+        answer TEXT NOT NULL,
+        source_ts TEXT,                   -- 使用的 [start, end] 時間戳對的 JSON 陣列
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    );
+
+    -- FTS5 虛擬資料表，用於逐字稿全文搜尋
+    -- 在儲存逐字稿後透過觸發器或手動插入來填充
+    CREATE VIRTUAL TABLE transcripts_fts USING fts5(
+        episode_id UNINDEXED,
+        full_text,
+        content='transcripts',
+        content_rowid='id'
+    );
+
+    -- 保持 FTS5 同步的觸發器
+    CREATE TRIGGER transcripts_ai AFTER INSERT ON transcripts BEGIN
+        INSERT INTO transcripts_fts(rowid, episode_id, full_text)
+        VALUES (new.id, new.episode_id, new.full_text);
+    END;
+  </database_schema>
+
+  <api_endpoints_summary>
+    不適用——本應用程式僅使用 Streamlit，無獨立的 REST API。
+    所有資料存取直接從 Streamlit 頁面函式透過 SQLite 資料庫進行。
+    Claude API 從匯入 Streamlit 頁面的 analyzer.py 模組中呼叫。
+    yt-dlp 和 Whisper 作為子程序從 downloader.py 和 transcriber.py 中呼叫。
+  </api_endpoints_summary>
+
+  <ui_layout>
+    ┌─────────────────────────────────────────────────────────────────────┐
+    │  🎧 PodcastBrain  — Turn Audio into Knowledge                       │
+    │─────────────────────────────────────────────────────────────────────│
+    │  側邊欄：                      主要內容：                           │
+    │  ┌───────────────────┐         ┌─────────────────────────────────┐  │
+    │  │ 導覽：            │         │  [目前頁面內容]                 │  │
+    │  │ ● Process New     │         │                                 │  │
+    │  │ ○ Episode Library │         │  頁面：處理新節目               │  │
+    │  │ ○ Batch Queue     │         │  ┌───────────────────────────┐  │  │
+    │  │                   │         │  │ URL 輸入或檔案上傳        │  │  │
+    │  │ Whisper 模型：    │         │  │ [________________________]│  │  │
+    │  │ [base ▼]          │         │  │ [Process Episode]         │  │  │
+    │  │                   │         │  └───────────────────────────┘  │  │
+    │  │ 語言：            │         │                                 │  │
+    │  │ [auto-detect ▼]   │         │  處理狀態：                    │  │
+    │  │                   │         │  ▓▓▓▓▓▓▓░░░ 轉錄中...          │  │
+    │  │ 最近節目：        │         │                                 │  │
+    │  │ • 節目標題 1      │         │  [完成後顯示節目檢視器]        │  │
+    │  │ • 節目標題 2      │         └─────────────────────────────────┘  │
+    │  └───────────────────┘                                              │
+    └─────────────────────────────────────────────────────────────────────┘
+
+    節目檢視器（4 個分頁 + 匯出列）：
+    ┌──────────────────────────────────────────────────────────────────┐
+    │  節目："My Podcast Episode Title"  |  時長：45:23               │
+    │──────────────────────────────────────────────────────────────────│
+    │  [Summary] [Chapters] [Transcript] [Q&A]                        │
+    │  匯出：[📄 MD] [📕 PDF] [💬 SRT] [📝 TXT] [📦 ZIP]             │
+    │──────────────────────────────────────────────────────────────────│
+    │  章節分頁：                                                      │
+    │  [Plotly 水平長條圖——章節時間軸]                                │
+    │  章節卡片，含標題、MM:SS-MM:SS、摘要                            │
+    └──────────────────────────────────────────────────────────────────┘
+
+    批次佇列頁面：
+    ┌──────────────────────────────────────────────────────────────────┐
+    │  批次處理佇列                                                    │
+    │  [在此貼上 URL，每行一個...                       ]              │
+    │  [                                                   ]           │
+    │  [Add to Queue]  [Start Processing]                              │
+    │                                                                  │
+    │  URL                    │ 標題      │ 狀態         │ 進度       │
+    │  youtube.com/watch?v=…  │ 節目 1    │ ✅ complete  │ 100%       │
+    │  youtube.com/watch?v=…  │ 節目 2    │ ⏳ transcrib │  45%       │
+    │  youtube.com/watch?v=…  │ —         │ 🔵 queued    │   0%       │
+    └──────────────────────────────────────────────────────────────────┘
+  </ui_layout>
+
+  <key_interactions>
+    流程 1 — 處理新節目：
+      使用者輸入 YouTube URL → 點擊「Process Episode」→ st.status() 顯示即時更新：
+      「下載音訊中...」、「轉錄中（可能需要幾分鐘）...」、「使用 Claude 分析中...」
+      → 節目檢視器出現，所有 4 個分頁均已填入資料 → 匯出按鈕可見。
+
+    流程 2 — 向節目提問：
+      使用者點擊 Q&amp;A 分頁 → 輸入問題 → 點擊「Ask」→ qa_engine.py 依關鍵字搜尋
+      逐字稿片段 → Claude 僅根據檢索到的段落回答 → 回應出現，
+      附有「來源：」引用於 st.expander → Q&amp;A 對加入可捲動的聊天記錄。
+
+    流程 3 — 搜尋節目資料庫：
+      使用者點擊「Episode Library」→ 輸入搜尋查詢 → FTS5 執行 → 帶高亮片段的
+      匹配節目卡片 → 點擊卡片從資料庫開啟完整節目檢視器。
+
+    流程 4 — 批次處理多個 URL：
+      使用者點擊「Batch Queue」→ 貼上多個 URL（每行一個）→ 點擊「Add to Queue」→
+      點擊「Start Processing」→ 狀態表格每 5 秒更新一次，顯示每個節目的
+      進度 → 完成後寄送電子郵件通知（若已設定）。
+  </key_interactions>
+
+  <implementation_steps>
+    步驟 1 — 專案骨架：
+    建立：podcastbrain/app.py、downloader.py、transcriber.py、analyzer.py、qa_engine.py、
+    db.py、requirements.txt、README.md。
+    db.py：SQLAlchemy 2.x engine、所有 4 個 ORM 模型、透過 text() DDL 的 FTS5 虛擬資料表、
+    插入後觸發器、使用 FTS5 DDL 分別執行的 create_all()、session factory。
+    app.py 骨架：側邊欄導覽、Whisper 模型 selectbox、語言 selectbox、
+    最近節目清單。
+
+    步驟 2 — yt-dlp 下載模組：
+    downloader.py：download_audio(url, output_dir)。子程序、進度解析、取消。
+    處理：網路錯誤、私人影片、無效 URL。
+    回傳 {file_path, title, duration_secs, thumbnail_url}。
+
+    步驟 3 — Whisper 轉錄模組：
+    transcriber.py：transcribe_audio(audio_path, model_name, language)。
+    Python API。回傳 {full_text, segments, word_count, language_detected}。
+
+    步驟 4 — Claude 分析模組：
+    analyzer.py：generate_chapters()、generate_summary_quotes_actions()、identify_speakers()。
+    各 3 次指數退避重試。合併 JSON 儲存於 claude_analysis 中。
+
+    步驟 5 — Q&amp;A 引擎：
+    qa_engine.py：answer_question(episode_id, question, api_key, db_session)。
+    關鍵字分割 → 片段搜尋 → 前 10 個 → 附引用提示的 Claude → 儲存 qa_history。
+
+    步驟 6 — Streamlit UI：輸入與處理：
+    Process New 頁面。使用 st.status() 進行即時步驟更新。完成後顯示節目檢視器。
+
+    步驟 7 — Streamlit UI：附匯出功能的節目檢視器：
+    Summary 分頁：markdown、區塊引用、行動事項核取方塊。
+    Chapters 分頁：Plotly 水平長條圖時間軸 + 章節卡片。
+    Transcript 分頁：可捲動，含淡色時間戳前綴。
+    Q&amp;A 分頁：st.chat_input + st.chat_message + 來源的 st.expander。
+    匯出列：5 個 st.download_button 小工具（MD、PDF、SRT、TXT、ZIP）。
+
+    步驟 8 — 資料庫、搜尋、批次佇列：
+    Library 頁面：附 snippet() 的 FTS5 查詢。3 欄卡片網格。date_input + slider 篩選。
+    Batch Queue 頁面：URL 的 st.text_area。「Add to Queue」插入節目。「Start Processing」
+    執行依序迴圈。st.empty() + st.rerun() 每 5 秒自動重新整理狀態表格。
+    批次完成時透過 smtplib.SMTP_SSL 選擇性發送電子郵件。
+  </implementation_steps>
+
+  <success_criteria>
+    功能性：
+    - 應用程式載入並在 http://localhost:8501 顯示 Streamlit 儀表板
+    - 輸入 YouTube URL 並點擊「Process Episode」啟動下載流程
+    - Whisper 轉錄對短音訊檔案產生非空的逐字稿
+    - Claude 分析生成至少 1 個章節與非空的摘要
+    - Q&amp;A 回傳附有逐字稿來源引用的答案
+    - 節目資料庫顯示先前處理過的節目
+    - FTS5 搜尋對逐字稿中存在的關鍵字回傳匹配節目
+    - PDF 匯出下載含節目標題與摘要的非空 PDF
+    - SRT 匯出下載格式為 00:00:00,000 的有效字幕檔
+    - 批次佇列依序處理多個 URL，並提供即時狀態更新
+    - 批次完成時寄送電子郵件通知（已設定 SMTP 憑證時）
+
+    使用者體驗：
+    - st.status() 容器在處理期間顯示即時步驟更新
+    - 處理完成後節目檢視器分頁已全部填入資料
+    - Plotly 章節時間軸在章節分頁中視覺化渲染
+    - Q&amp;A 聊天記錄可捲動且在 session 內持久
+    - 資料庫搜尋結果在 1 秒內出現
+    - 批次狀態表格每 5 秒自動重新整理，無需完整頁面重新載入
+    - Streamlit 中無未處理的 Python 例外（紅色錯誤框）
+
+    技術品質：
+    - 啟動時建立含 FTS5 虛擬資料表的 SQLite 資料庫
+    - FTS5 觸發器正確自動為新逐字稿建立索引
+    - Whisper 以正確的模型名稱呼叫並回傳含時間戳的片段
+    - Claude 僅接收文字（絕不接收音訊二進位資料）
+    - 所有三個 Claude API 呼叫在 analyzer.py 中為獨立函式
+    - qa_engine.py 系統提示包含「Answer only from the provided transcript excerpts」
+    - 使用者取消時 yt-dlp 子程序乾淨地終止
+    - 逐字稿儲存至資料庫後清理暫存音訊檔案
+    - 批次佇列狀態在頁面重新載入後仍存在（持久化於 SQLite status 欄位）
+  </success_criteria>
+</project_specification>

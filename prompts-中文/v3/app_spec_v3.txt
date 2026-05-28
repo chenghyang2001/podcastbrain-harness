@@ -1,0 +1,269 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project_specification version="v3">
+  <project_name>PodcastBrain — v3: 完整分析 + 問答功能</project_name>
+
+  <overview>
+    PodcastBrain v3 在 v2「下載-轉錄-章節」基礎上，新增兩個最具價值的智慧層：
+    Claude 完整分析與互動式問答（Q&A）。處理完成後，使用者可在四標籤頁的「劇集檢視器」中查看：
+    摘要（多段落概覽、關鍵引言、行動項目、發言人識別）、章節、逐字稿，以及問答。
+    問答標籤頁讓使用者提問，所有答案均嚴格根據該集的逐字稿內容作答——
+    不會產生幻覺，每個答案都有實際說話內容為依據。所有資料（含每集的問答紀錄）均持久化儲存於 SQLite。
+  </overview>
+
+  <feature_list>
+    [
+      {
+        "id": 1,
+        "name": "音訊輸入",
+        "description": "URL 輸入（YouTube 及直接連結）與檔案上傳（.mp3/.m4a/.wav），使用 yt-dlp 下載並顯示即時進度條。"
+      },
+      {
+        "id": 2,
+        "name": "本地 Whisper 語音轉錄",
+        "description": "在裝置端進行語音轉錄，可選擇模型（tiny/base/small/medium/large）。完整文字與帶時間戳的片段均儲存於資料庫。"
+      },
+      {
+        "id": 3,
+        "name": "Claude 章節偵測",
+        "description": "Claude 從逐字稿中偵測章節，並回傳 [{title, start_seconds, end_seconds, summary}] JSON 陣列。"
+      },
+      {
+        "id": 4,
+        "name": "Claude 完整分析",
+        "description": "三次獨立的 Claude 呼叫：(a) 3-5 段摘要 + 關鍵主題，(b) 5-7 個附時間戳的關鍵引言及行動項目，(c) 發言人識別。"
+      },
+      {
+        "id": 5,
+        "name": "向本集提問（Q&A）",
+        "description": "以關鍵字為基礎的片段檢索，將相關逐字稿段落提供給 Claude。答案嚴格基於逐字稿內容，問答紀錄持久化儲存於資料庫。"
+      }
+    ]
+  </feature_list>
+
+  <technology_stack>
+    <api_key>
+      必須設定 ANTHROPIC_API_KEY 環境變數。
+      讀取方式：api_key = os.environ["ANTHROPIC_API_KEY"]
+    </api_key>
+    <web_framework>
+      <name>Streamlit</name>
+      <port>8501</port>
+      <notes>側欄導覽：處理新劇集 / 我的劇集。
+      劇集檢視器：四個標籤頁（摘要、章節、逐字稿、問答）。</notes>
+    </web_framework>
+    <language>Python 3.11+</language>
+    <download>yt-dlp — subprocess 包裝器，解析 stdout 進度</download>
+    <transcription>openai-whisper — 本地語音轉錄，提供模型選擇下拉選單</transcription>
+    <ai>Anthropic Claude claude-sonnet-4-6 — 章節偵測、完整分析、問答回答</ai>
+    <database>SQLite via SQLAlchemy 2.x — 4 個資料表：episodes、transcripts、chapters、qa_history</database>
+    <dependencies>
+      streamlit, yt-dlp, openai-whisper, anthropic, sqlalchemy, ffmpeg-python
+    </dependencies>
+  </technology_stack>
+
+  <prerequisites>
+    <environment_setup>
+      - 必須設定 ANTHROPIC_API_KEY 環境變數
+      - 已安裝 Python 3.11+
+      - 必須安裝 ffmpeg 並可在 PATH 中存取
+      - 已安裝 yt-dlp（pip install yt-dlp）
+      - 已安裝 openai-whisper（pip install openai-whisper）
+      - 首次執行 Whisper 時會下載所選模型
+      - v3 不需要 SQLite FTS5（問答功能使用純文字搜尋）
+    </environment_setup>
+  </prerequisites>
+
+  <core_features>
+    1. 音訊輸入 — URL 文字輸入（YouTube 觀看 URL、直接 MP3/M4A/WAV 連結）與
+       檔案上傳元件（.mp3、.m4a、.wav）。yt-dlp 將音訊下載至暫存目錄。
+       透過解析 stdout 更新進度條。取消按鈕可終止子程序。
+
+    2. 本地 Whisper 語音轉錄 — 模型選擇下拉選單（tiny/base/small/medium/large）。
+       透過 Python API 呼叫 Whisper。擷取 full_text 與 segments（start/end/text）。
+       語言自動偵測或由使用者指定。結果儲存於 transcripts 資料表。
+
+    3. Claude 章節偵測 — Claude 接收完整逐字稿文字，回傳 JSON 陣列：
+       [{title, start_seconds, end_seconds, summary}, ...]。JSON 驗證後，
+       以指數退避策略重試 3 次。若時長少於 300 秒則退回單一章節。
+       章節資料儲存於資料庫。
+
+    4. Claude 完整分析 — analyzer.py 中三次獨立的 Claude API 呼叫：
+       (a) generate_summary_quotes_actions(transcript_text, api_key) — 回傳 JSON，包含：
+           summary（3-5 段摘要）、quotes（{text, speaker, timestamp_seconds} 陣列）、
+           action_items（具體後續步驟的編號清單）。
+       (b) identify_speakers(transcript_text, api_key) — 回傳 JSON，包含發言人標籤
+           與模式描述。
+       所有呼叫均使用重試邏輯（3 次嘗試，指數退避）。合併結果以 JSON 格式
+       儲存於 episodes.claude_analysis 欄位。
+
+    5. 向本集提問（Q&A） — qa_engine.py：從逐字稿 JSON 中以關鍵字檢索片段。
+       最相關的前 10 個片段提供給 Claude。系統提示為：「僅根據提供的逐字稿摘錄回答。
+       如果答案不在逐字稿中，請明確說明。不得產生幻覺。」
+       回答包含引用的片段時間戳。問答對儲存於 qa_history 資料表。
+       聊天式 UI 含可捲動的歷史記錄。
+  </core_features>
+
+  <database_schema>
+    -- 主要劇集記錄
+    CREATE TABLE episodes (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        title TEXT,
+        source_url TEXT NOT NULL,
+        source_type TEXT CHECK(source_type IN ('youtube','direct_url','file_upload')),
+        audio_path TEXT,
+        duration_secs INTEGER,
+        whisper_model TEXT,
+        language TEXT DEFAULT 'en',
+        status TEXT CHECK(status IN ('queued','downloading','transcribing','analyzing','complete','failed')),
+        error_message TEXT,
+        claude_analysis TEXT,   -- JSON: {summary, quotes, action_items, speakers}
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        processed_at TIMESTAMP
+    );
+
+    -- 含片段級時間戳的完整逐字稿
+    CREATE TABLE transcripts (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        episode_id INTEGER NOT NULL REFERENCES episodes(id) ON DELETE CASCADE,
+        full_text TEXT NOT NULL,
+        segments TEXT,          -- JSON 陣列：[{start, end, text}, ...]
+        word_count INTEGER,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    );
+
+    -- Claude 分析產生的章節標記
+    CREATE TABLE chapters (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        episode_id INTEGER NOT NULL REFERENCES episodes(id) ON DELETE CASCADE,
+        title TEXT NOT NULL,
+        start_seconds INTEGER NOT NULL,
+        end_seconds INTEGER,
+        summary TEXT,
+        sort_order INTEGER NOT NULL
+    );
+
+    -- 每集的問答互動歷史記錄
+    CREATE TABLE qa_history (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        episode_id INTEGER NOT NULL REFERENCES episodes(id) ON DELETE CASCADE,
+        question TEXT NOT NULL,
+        answer TEXT NOT NULL,
+        source_ts TEXT,         -- 使用的時間戳對 [start, end] 的 JSON 陣列
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    );
+  </database_schema>
+
+  <api_endpoints_summary>
+    不適用 — 純 Streamlit 應用，無 REST API。
+    Claude API 從 analyzer.py 和 qa_engine.py 呼叫。
+    yt-dlp 和 Whisper 作為子程序，分別從 downloader.py 和 transcriber.py 調用。
+  </api_endpoints_summary>
+
+  <ui_layout>
+    ┌─────────────────────────────────────────────────────────────────────┐
+    │  🎧 PodcastBrain                                                    │
+    │─────────────────────────────────────────────────────────────────────│
+    │  側欄：                        主要內容：                           │
+    │  ┌───────────────────┐         ┌─────────────────────────────────┐  │
+    │  │ ● 處理新劇集      │         │  URL 輸入或檔案上傳              │  │
+    │  │ ○ 我的劇集        │         │  [_____________________________] │  │
+    │  │                   │         │  [處理劇集]                      │  │
+    │  │ Whisper 模型：    │         │                                  │  │
+    │  │ [base ▼]          │         │  ▓▓▓▓▓▓░░░░ 分析中...           │  │
+    │  │ 語言：            │         │                                  │  │
+    │  │ [自動偵測 ▼]      │         │  劇集檢視器（4 個標籤頁）：      │  │
+    │  │                   │         │  [摘要][章節][逐字稿]            │  │
+    │  │ 最近劇集：        │         │  [問答]                          │  │
+    │  │ • 標題 1          │         └─────────────────────────────────┘  │
+    │  │ • 標題 2          │                                              │
+    │  └───────────────────┘                                              │
+    └─────────────────────────────────────────────────────────────────────┘
+
+    劇集檢視器 — 4 個標籤頁：
+    ┌──────────────────────────────────────────────────────────────────┐
+    │  劇集：「標題」  |  時長：45:23                                   │
+    │──────────────────────────────────────────────────────────────────│
+    │  [摘要] [章節] [逐字稿] [問答]                                   │
+    │──────────────────────────────────────────────────────────────────│
+    │  摘要標籤：3-5 段概覽 | 關鍵引言 | 行動項目                      │
+    │  章節標籤：章節卡片，含標題、時間範圍、摘要                      │
+    │  逐字稿標籤：可捲動文字，含時間戳標記                            │
+    │  問答標籤：[提問...] → 附來源引用的答案                          │
+    └──────────────────────────────────────────────────────────────────┘
+  </ui_layout>
+
+  <key_interactions>
+    流程 1 — 處理新劇集：
+      使用者貼上 URL + 選擇 Whisper 模型 → 點擊「處理劇集」 →
+      st.status() 顯示：「下載中...」、「轉錄中...」、「偵測章節中...」、
+      「Claude 分析中...」→ 劇集檢視器的四個標籤頁全部填入資料。
+
+    流程 2 — 提問：
+      使用者開啟問答標籤頁 → 輸入問題 → 點擊「提問」→ qa_engine 以關鍵字搜尋逐字稿
+      片段 → Claude 僅根據擷取的段落作答 → 回答顯示「來源：」引用
+      （可展開，顯示使用的確切摘錄）→ 問答對追加至可捲動的聊天紀錄。
+
+    流程 3 — 查看過去的劇集：
+      使用者點擊「我的劇集」→ 列出所有劇集（含標題、日期、時長）→
+      點擊可開啟劇集檢視器（從資料庫載入，所有標籤頁均可使用，無需重新處理）。
+  </key_interactions>
+
+  <implementation_steps>
+    步驟 1 — 專案鷹架：
+    建立：podcastbrain/app.py、downloader.py、transcriber.py、analyzer.py、qa_engine.py、
+    db.py、requirements.txt。
+    db.py：SQLAlchemy 引擎、Episode/Transcript/Chapter/QAHistory ORM 模型、create_all()。
+
+    步驟 2 — yt-dlp 下載模組：
+    downloader.py：download_audio(url, output_dir)。解析進度，支援取消。
+    回傳 {file_path, title, duration_secs}。
+
+    步驟 3 — Whisper 語音轉錄模組：
+    transcriber.py：transcribe_audio(audio_path, model_name, language)。
+    回傳 {full_text, segments, word_count, language_detected}。
+
+    步驟 4 — Claude 分析模組：
+    analyzer.py：三個獨立函式，含重試邏輯（3 次嘗試，指數退避）：
+    (a) generate_chapters(transcript_text, duration_secs, api_key) — JSON [{title, start, end, summary}]
+    (b) generate_summary_quotes_actions(transcript_text, api_key) — JSON {summary, quotes, action_items}
+    (c) identify_speakers(transcript_text, api_key) — JSON {speakers: [...]}
+    合併結果以 JSON 格式儲存於 episodes.claude_analysis。
+
+    步驟 5 — 問答引擎：
+    qa_engine.py：answer_question(episode_id, question, api_key, db_session)。
+    拆分關鍵字 → 搜尋 segments JSON → 依匹配分數取前 10 名 → 以
+    「僅根據逐字稿回答」的系統提示呼叫 Claude → 儲存至 qa_history → 回傳
+    {answer, cited_segments}。
+
+    步驟 6 — Streamlit UI：輸入與處理：
+    「處理新劇集」頁面。循序執行：下載 → 轉錄 → 分析 → 更新狀態。
+    st.status() 顯示即時步驟訊息。
+
+    步驟 7 — Streamlit UI：劇集檢視器：
+    四標籤頁佈局。摘要標籤：格式化 markdown、引言區塊、
+    st.checkbox 行動項目。章節標籤：章節卡片，含標題、MM:SS-MM:SS、摘要。
+    逐字稿標籤：可捲動完整文字，含淡色時間戳前綴。
+    問答標籤：st.chat_input（或 st.text_input）+ 可捲動的聊天紀錄，
+    使用 st.chat_message 容器。來源顯示於 st.expander。
+  </implementation_steps>
+
+  <success_criteria>
+    功能性：
+    - 應用程式在 http://localhost:8501 正常載入
+    - YouTube URL 完整端對端處理：四個標籤頁全部填入資料
+    - 摘要標籤顯示多段摘要、關鍵引言、行動項目
+    - 章節標籤顯示正確的章節結構
+    - 逐字稿標籤顯示含時間戳的完整文字
+    - 問答回傳有逐字稿來源引用的有根據答案
+    - 問答紀錄在 session 中及跨頁面重新載入後仍持久存在（來自資料庫）
+    - 已處理的劇集可在「我的劇集」清單中查看
+
+    技術品質：
+    - 三個 Claude API 呼叫均為 analyzer.py 中的獨立函式
+    - qa_engine.py 的系統提示包含「Answer only from the provided transcript excerpts」
+    - Claude 僅接收文字（絕不接收音訊二進位資料）
+    - 所有 Claude 呼叫均有指數退避的重試邏輯
+    - claude_analysis 以 JSON 格式儲存於 episodes 資料表
+    - 每次問答互動後均填入 QAHistory 資料表
+  </success_criteria>
+</project_specification>

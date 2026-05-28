@@ -23,7 +23,11 @@ on:
       model:
         description: "Claude model to use"
         required: false
-        default: "claude-sonnet-4-5"
+        default: "claude-sonnet-4-6"
+      version:
+        description: "Prompt version (selects prompts/<version>/ subdirectory)"
+        required: false
+        default: "v1"
 
 # 全域：停用 writer QA hook 避免巢狀 agent 寫程式碼檔時被三 agent 鐵律攔截。
 # ANTHROPIC_API_KEY 從全域移除，改在各需要的 step 的 env: 區段傳入，
@@ -115,6 +119,27 @@ jobs:
           git config --global user.email "agent@autonomous-coding"
           git config --global user.name "Autonomous Agent"
 
+      # Seed pre-generated files so harness skips the initializer session (Session 1).
+      # The harness checks: if [ ! -f "feature_list.json" ]; then run initializer.
+      # By seeding feature_list.json into generations/$PROJECT_NAME/, we skip Session 1.
+      - name: Seed pre-generated project files
+        env:
+          PROJECT_NAME: ${{ github.event.inputs.project_name || 'podcastbrain_ci' }}
+        run: |
+          if [[ ! "$PROJECT_NAME" =~ ^[a-zA-Z0-9_-]+$ ]]; then
+            echo "::error::project_name contains invalid characters" >&2
+            exit 1
+          fi
+          mkdir -p "generations/$PROJECT_NAME"
+          if [ -f feature_list.json ] && [ -f requirements.txt ] && [ -f init.sh ]; then
+            cp feature_list.json "generations/$PROJECT_NAME/feature_list.json"
+            cp requirements.txt "generations/$PROJECT_NAME/requirements.txt"
+            cp init.sh "generations/$PROJECT_NAME/init.sh"
+            echo "Seeded generations/$PROJECT_NAME/ with feature_list.json, requirements.txt, init.sh"
+          else
+            echo "Seed files not found in repo root — harness will run initializer session instead"
+          fi
+
       # 主要步驟：執行 autonomous coding harness。
       # 所有 inputs 先移入 env: 區塊，run 裡改用 $ENV_VAR，消除 shell injection 風險。
       # 認證走 OAuth（~/.claude/.credentials.json），不用 ANTHROPIC_API_KEY。
@@ -123,12 +148,13 @@ jobs:
       - name: Run autonomous coding harness
         timeout-minutes: 320
         env:
-          MODEL: ${{ github.event.inputs.model || 'claude-sonnet-4-5' }}
+          MODEL: ${{ github.event.inputs.model || 'claude-sonnet-4-6' }}
           PROJECT_NAME: ${{ github.event.inputs.project_name || 'podcastbrain_ci' }}
           MAX_ITER: ${{ github.event.inputs.max_iterations || '30' }}
           NUM_FEATURES: ${{ github.event.inputs.num_features || '5' }}
+          VERSION: ${{ github.event.inputs.version || 'v1' }}
         run: |
-          bash autonomous_cli_loop.sh "$PROJECT_NAME" "$MAX_ITER" "$NUM_FEATURES"
+          bash autonomous_cli_loop.sh "$PROJECT_NAME" "$MAX_ITER" "$NUM_FEATURES" "$VERSION"
 
       # 無論 harness 成功或失敗都顯示 feature 結果；若 feature_list.json 不存在
       # 則說明 initializer 就失敗了，印出相應提示。

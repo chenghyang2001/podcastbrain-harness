@@ -19,9 +19,10 @@ set -euo pipefail
 # 不靠對話延續（故意不用 claude --continue，見下方註解）。
 #
 # 用法：
-#   ./autonomous_cli_loop.sh [專案名稱] [最大coding迭代數]
+#   ./autonomous_cli_loop.sh [專案名稱] [最大coding迭代數] [功能數] [版本]
+#   ./autonomous_cli_loop.sh podcastbrain_ci 30 8 v1   # 完整範例
 #   DRY_RUN=1 ./autonomous_cli_loop.sh    # 乾跑：只做檢查與設定，不真的呼叫 claude
-#   MODEL=claude-opus-4-6 ./autonomous_cli_loop.sh   # 覆寫模型
+#   MODEL=claude-sonnet-4-6 ./autonomous_cli_loop.sh   # 覆寫模型
 # ==============================================================================
 
 # --- 參數與變數 --------------------------------------------------------------
@@ -35,8 +36,17 @@ MAX_ITER="${2:-30}"
 # $3：initializer 產生的端對端測試案例數量（feature_list.json），預設 5
 NUM_FEATURES="${3:-5}"
 
-# 模型：可用環境變數 MODEL 覆寫，否則用 Sonnet 4.5
-MODEL="${MODEL:-claude-sonnet-4-5-20250929}"
+# $4：版本識別符（對應 prompts/ 底下的子目錄名稱），預設 v1
+VERSION="${4:-v1}"
+
+# VERSION 格式驗證：只允許英數字、連字號與底線，防止路徑穿越。
+if [[ ! "$VERSION" =~ ^[a-zA-Z0-9_-]+$ ]]; then
+  echo "錯誤：VERSION 只允許英數字、連字號與底線，收到：$VERSION" >&2
+  exit 1
+fi
+
+# 模型：可用環境變數 MODEL 覆寫，否則用 Sonnet 4.6
+MODEL="${MODEL:-claude-sonnet-4-6}"
 
 # DRY_RUN：環境變數，設為 1 時進乾跑模式（只做檢查與設定，不呼叫 claude）
 DRY_RUN="${DRY_RUN:-0}"
@@ -55,13 +65,9 @@ STALL_LIMIT="${STALL_LIMIT:-3}"
 # 用 BASH_SOURCE 取得腳本本身位置，再 cd 進去取絕對路徑。
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-PROMPTS_DIR="$SCRIPT_DIR/prompts"
+PROMPTS_DIR="$SCRIPT_DIR/prompts/$VERSION"
 PROJECT_DIR="$SCRIPT_DIR/generations/$PROJECT_NAME"
 PARSER_PATH="$SCRIPT_DIR/scripts/parse_claude_stream.py"
-_INIT_PROMPT_TMP=$(mktemp /tmp/cc_initprompt_XXXX.md)
-sed "s/__NUM_FEATURES__/$NUM_FEATURES/g" "$PROMPTS_DIR/initializer_prompt.md" > "$_INIT_PROMPT_TMP"
-INITIALIZER_PROMPT="$_INIT_PROMPT_TMP"
-CODING_PROMPT="$PROMPTS_DIR/coding_prompt.md"
 
 # --- 前置檢查（preflight） ---------------------------------------------------
 # 任一硬性檢查失敗：印繁中錯誤訊息到 stderr 並 exit 1。
@@ -79,18 +85,18 @@ if ! command -v python3 >/dev/null 2>&1; then
 fi
 
 # 三個 prompt 檔缺一不可。
-if [ ! -f "$PROMPTS_DIR/initializer_prompt.md" ]; then
-  echo "錯誤：缺少 $PROMPTS_DIR/initializer_prompt.md。" >&2
+if [ ! -f "$PROMPTS_DIR/initializer_prompt_${VERSION}.md" ]; then
+  echo "錯誤：缺少 $PROMPTS_DIR/initializer_prompt_${VERSION}.md。" >&2
   exit 1
 fi
 
-if [ ! -f "$PROMPTS_DIR/coding_prompt.md" ]; then
-  echo "錯誤：缺少 $PROMPTS_DIR/coding_prompt.md。" >&2
+if [ ! -f "$PROMPTS_DIR/coding_prompt_${VERSION}.md" ]; then
+  echo "錯誤：缺少 $PROMPTS_DIR/coding_prompt_${VERSION}.md。" >&2
   exit 1
 fi
 
-if [ ! -f "$PROMPTS_DIR/app_spec.txt" ]; then
-  echo "錯誤：缺少 $PROMPTS_DIR/app_spec.txt。" >&2
+if [ ! -f "$PROMPTS_DIR/app_spec_${VERSION}.txt" ]; then
+  echo "錯誤：缺少 $PROMPTS_DIR/app_spec_${VERSION}.txt。" >&2
   exit 1
 fi
 
@@ -104,6 +110,12 @@ fi
 
 # --- 設定階段 ----------------------------------------------------------------
 
+_INIT_PROMPT_TMP=$(mktemp /tmp/cc_initprompt_XXXX.md)
+trap 'rm -f "$_INIT_PROMPT_TMP"' EXIT
+sed "s/__NUM_FEATURES__/$NUM_FEATURES/g" "$PROMPTS_DIR/initializer_prompt_${VERSION}.md" > "$_INIT_PROMPT_TMP"
+INITIALIZER_PROMPT="$_INIT_PROMPT_TMP"
+CODING_PROMPT="$PROMPTS_DIR/coding_prompt_${VERSION}.md"
+
 # 建立專案目錄，並立即初始化獨立的 git repo。
 # 若不在此處 git init，claude 的 git 操作會冒泡命中外層 harness repo 的 .git，
 # 把 app code 誤 commit 到 harness 裡（已實證踩坑：vps_run1）。
@@ -115,7 +127,7 @@ if [ ! -d "$PROJECT_DIR/.git" ]; then
 fi
 
 # 複製 app_spec.txt 進專案目錄，讓 claude 從 cwd（PROJECT_DIR）直接讀得到。
-cp "$PROMPTS_DIR/app_spec.txt" "$PROJECT_DIR/app_spec.txt"
+cp "$PROMPTS_DIR/app_spec_${VERSION}.txt" "$PROJECT_DIR/app_spec.txt"
 
 # 寫入專案層級 .claude/settings.json：每次執行覆寫即可。
 # 此設定給 claude 子程序自動 accept 編輯權限 + 白名單常用工具，
@@ -165,6 +177,7 @@ echo "=============================================================="
 echo " 自主編碼 CLI 迴圈（Linux 版）"
 echo "  專案目錄：$PROJECT_DIR"
 echo "  模型：$MODEL"
+echo "  版本：$VERSION"
 echo "  最大 coding 迭代數：$MAX_ITER"
 if [ "$DRY_RUN" = "1" ]; then
   echo "  模式：DRY-RUN（不會真的呼叫 claude）"

@@ -199,3 +199,132 @@ jobs:
           path: generations/
           retention-days: 30
           if-no-files-found: warn
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-22.04
+    if: success()
+    env:
+      PROJECT_NAME: ${{ github.event.inputs.project_name || 'podcastbrain_ci' }}
+      VPS_HOST: "187.127.109.145"
+      VPS_USER: "claude"
+      REMOTE_DIR: "/home/claude/podcastbrain"
+
+    steps:
+      - name: Download generated artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: podcastbrain-app-${{ github.run_number }}
+          path: artifact/
+
+      - name: Verify all features passed before deploying
+        run: |
+          if [[ ! "$PROJECT_NAME" =~ ^[a-zA-Z0-9_-]+$ ]]; then
+            echo "::error::project_name contains invalid characters"
+            exit 1
+          fi
+          FEATURE_FILE="artifact/$PROJECT_NAME/feature_list.json"
+          if [ ! -f "$FEATURE_FILE" ]; then
+            echo "::error::feature_list.json not found at $FEATURE_FILE — cannot verify build quality"
+            exit 1
+          fi
+          python3 -c "
+          import json, sys
+          path = sys.argv[1]
+          features = json.load(open(path, encoding='utf-8'))
+          total = len(features)
+          passed = sum(1 for f in features if f.get('passes'))
+          print(f'Features: {passed}/{total} passed')
+          if passed < total:
+              failed = [f for f in features if not f.get('passes')]
+              for f in failed:
+                  print('FAIL:', f.get('id'), '-', f.get('feature', ''))
+              print('::error::Not all features passed — aborting deploy')
+              sys.exit(1)
+          print('All features passed — proceeding with deploy')
+          " "$FEATURE_FILE"
+
+      - name: Set up SSH key
+        env:
+          VPS_SSH_KEY: ${{ secrets.VPS_SSH_KEY }}
+        run: |
+          mkdir -p ~/.ssh
+          printf '%s' "$VPS_SSH_KEY" | tr -d '\r' > ~/.ssh/vps_key
+          chmod 600 ~/.ssh/vps_key
+          ssh-keyscan -H "$VPS_HOST" >> ~/.ssh/known_hosts 2>/dev/null || true
+
+      - name: Sync app files to VPS
+        run: |
+          APP_SRC="artifact/$PROJECT_NAME"
+          if [ ! -d "$APP_SRC/podcastbrain" ]; then
+            echo "::error::podcastbrain/ subdir missing in artifact at $APP_SRC"
+            exit 1
+          fi
+          if [ ! -f "$APP_SRC/requirements.txt" ]; then
+            echo "::error::requirements.txt missing in artifact at $APP_SRC"
+            exit 1
+          fi
+          rsync -az --delete \
+            -e "ssh -i ~/.ssh/vps_key -o StrictHostKeyChecking=accept-new" \
+            "$APP_SRC/podcastbrain/" \
+            "$VPS_USER@$VPS_HOST:$REMOTE_DIR/podcastbrain/"
+          rsync -az \
+            -e "ssh -i ~/.ssh/vps_key -o StrictHostKeyChecking=accept-new" \
+            "$APP_SRC/requirements.txt" \
+            "$VPS_USER@$VPS_HOST:$REMOTE_DIR/requirements.txt"
+
+      - name: Bootstrap and restart on VPS
+        run: |
+          ssh -i ~/.ssh/vps_key -o StrictHostKeyChecking=accept-new \
+            "$VPS_USER@$VPS_HOST" << 'ENDSSH'
+          set -e
+          DEPLOY_DIR="/home/claude/podcastbrain"
+          mkdir -p "$DEPLOY_DIR/downloads"
+
+          # Kill any stale streamlit processes before taking over port 8501
+          pkill -f "streamlit run" || true
+          sleep 2
+
+          # Create or update Python venv
+          python3 -m venv "$DEPLOY_DIR/.venv"
+          "$DEPLOY_DIR/.venv/bin/pip" install -r "$DEPLOY_DIR/requirements.txt" --quiet
+
+          # Write systemd service unit
+          cat > /tmp/podcastbrain.service << 'SERVICE'
+          [Unit]
+          Description=PodcastBrain v1 Streamlit App
+          After=network.target
+
+          [Service]
+          User=claude
+          WorkingDirectory=/home/claude/podcastbrain
+          Environment=PYTHONPATH=/home/claude/podcastbrain
+          ExecStart=/home/claude/podcastbrain/.venv/bin/streamlit run podcastbrain/app.py --server.port 8501 --server.headless true --server.fileWatcherType none
+          Restart=on-failure
+          RestartSec=5
+
+          [Install]
+          WantedBy=multi-user.target
+          SERVICE
+
+          sudo cp /tmp/podcastbrain.service /etc/systemd/system/podcastbrain.service
+          sudo systemctl daemon-reload
+          sudo systemctl enable podcastbrain
+          sudo systemctl restart podcastbrain
+          echo "Waiting for service to become active..."
+          for i in 1 2 3 4 5; do
+            sudo systemctl is-active podcastbrain && break || sleep 3
+          done
+          sudo systemctl is-active podcastbrain
+          echo "Deploy complete: $(date)"
+          ENDSSH
+
+      - name: Health check
+        run: |
+          sleep 5
+          HTTP=$(curl -s -o /dev/null -w "%{http_code}" --max-time 15 "http://$VPS_HOST:8501" || echo "000")
+          echo "VPS HTTP status: $HTTP"
+          if [ "$HTTP" != "200" ]; then
+            echo "::warning::VPS health check returned $HTTP (expected 200)"
+          fi
+          echo "Deployed to http://$VPS_HOST:8501"

@@ -1,0 +1,116 @@
+[
+  {
+    "id": 1,
+    "feature": "Streamlit app loads at port 8501",
+    "category": "functional",
+    "priority": 1,
+    "passes": false,
+    "testing_steps": [
+      "puppeteer_navigate to http://localhost:8501",
+      "puppeteer_screenshot to verify page loaded without errors",
+      "Check page title or header contains 'PodcastBrain'",
+      "Verify a URL input field (text_input) is visible on the page"
+    ]
+  },
+  {
+    "id": 2,
+    "feature": "URL input field accepts YouTube watch URLs",
+    "category": "functional",
+    "priority": 2,
+    "passes": false,
+    "testing_steps": [
+      "puppeteer_navigate to http://localhost:8501",
+      "puppeteer_fill the URL input field with 'https://www.youtube.com/watch?v=jNQXAC9IVRw'",
+      "puppeteer_screenshot to confirm the URL text appears in the input field"
+    ]
+  },
+  {
+    "id": 3,
+    "feature": "'Download Audio' button is visible and clickable",
+    "category": "functional",
+    "priority": 3,
+    "passes": false,
+    "testing_steps": [
+      "puppeteer_navigate to http://localhost:8501",
+      "puppeteer_screenshot to verify 'Download Audio' button is visible",
+      "puppeteer_fill URL input with 'https://www.youtube.com/watch?v=jNQXAC9IVRw'",
+      "puppeteer_click the 'Download Audio' button and verify no immediate Python traceback appears"
+    ]
+  },
+  {
+    "id": 4,
+    "feature": "Progress bar increments from 0% to 100% during yt-dlp download",
+    "category": "functional",
+    "priority": 4,
+    "passes": false,
+    "testing_steps": [
+      "puppeteer_navigate to http://localhost:8501",
+      "puppeteer_fill the URL input with 'https://www.youtube.com/watch?v=jNQXAC9IVRw' (short ~19s video)",
+      "puppeteer_click the 'Download Audio' button",
+      "puppeteer_screenshot immediately to confirm a progress bar element is now visible",
+      "Verify the progress bar shows a percentage or 'Downloading' status text",
+      "Wait for the download to complete (up to 60 seconds)",
+      "puppeteer_screenshot after completion to confirm the progress bar reached 100% or disappeared",
+      "Verify no Python traceback is visible in the page output"
+    ]
+  },
+  {
+    "id": 5,
+    "feature": "Downloaded file appears in ./downloads/ directory with success message showing file path and size",
+    "category": "functional",
+    "priority": 5,
+    "passes": false,
+    "testing_steps": [
+      "puppeteer_navigate to http://localhost:8501",
+      "puppeteer_fill the URL input with 'https://www.youtube.com/watch?v=jNQXAC9IVRw'",
+      "puppeteer_click 'Download Audio' and wait for completion",
+      "puppeteer_screenshot to verify a success message is displayed",
+      "Confirm the success message contains a file path string (e.g., './downloads/') and file size in MB",
+      "Run bash: ls ./downloads/ to confirm an .mp3 file exists with non-zero size"
+    ]
+  },
+  {
+    "id": 6,
+    "feature": "Invalid URL shows a user-friendly error message (not a Python traceback)",
+    "category": "functional",
+    "priority": 6,
+    "passes": false,
+    "testing_steps": [
+      "puppeteer_navigate to http://localhost:8501",
+      "puppeteer_fill the URL input with 'not-a-real-url'",
+      "puppeteer_click 'Download Audio'",
+      "puppeteer_screenshot after a few seconds",
+      "Verify the page shows a red Streamlit error box with a readable message",
+      "Confirm no 'Traceback (most recent call last):' text is visible on the page"
+    ]
+  },
+  {
+    "id": 7,
+    "feature": "Cancel button stops the active download and removes the partial file",
+    "category": "functional",
+    "priority": 7,
+    "passes": false,
+    "testing_steps": [
+      "puppeteer_navigate to http://localhost:8501",
+      "puppeteer_fill the URL input with a long YouTube video URL (>10 minutes to ensure download takes time)",
+      "puppeteer_click 'Download Audio' to start the download",
+      "puppeteer_screenshot to confirm progress bar is visible and download has started",
+      "puppeteer_click the 'Cancel' button while download is in progress",
+      "puppeteer_screenshot to confirm the download stopped and the UI reset to input state",
+      "Run bash: ls ./downloads/ to verify no partial .part file remains",
+      "Verify the app is responsive (URL input is editable again)"
+    ]
+  },
+  {
+    "id": 8,
+    "feature": "Style: single-page layout has no overflow at standard 1280px window width",
+    "category": "style",
+    "priority": 8,
+    "passes": false,
+    "testing_steps": [
+      "puppeteer_navigate to http://localhost:8501",
+      "puppeteer_evaluate to set window width to 1280px",
+      "puppeteer_screenshot and verify no horizontal scrollbar is visible and all UI elements fit within the viewport"
+    ]
+  }
+]

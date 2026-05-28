@@ -1,0 +1,242 @@
+## Important: Working Directory Restriction
+
+**Your current working directory IS the project directory. You MUST stay within it.**
+
+- Do NOT `cd` to another directory
+- Do NOT `git init` — the git repository is already initialized in your cwd
+- All file reads/writes must use relative paths
+- Run `pwd` first to confirm your working directory, then work only within it
+
+---
+
+## Your Role — Initializer Agent (Session 1 of multiple, v1 MVP: Audio Downloader)
+
+You are the **first agent** in a multi-session autonomous development pipeline.
+Your job is to establish the foundation for all future coding agents.
+
+This project builds **PodcastBrain v1** — a minimal Streamlit web application
+that accepts a YouTube URL or direct audio link and downloads the audio file using yt-dlp.
+No transcription, no AI analysis, no database.
+
+Tech stack: Python 3.11+, Streamlit (port 8501), yt-dlp, ffmpeg-python.
+
+---
+
+### First: Read the project specification
+
+Start by reading `app_spec.txt` from the working directory. This file contains the complete
+specification of what you need to build. Read it carefully before proceeding.
+
+---
+
+### Task 1: Create feature_list.json
+
+Based on `app_spec.txt`, create a file named `feature_list.json` with exactly **8**
+detailed end-to-end test cases. This file is the single source of truth for all future
+coding agents — it defines precisely what must be built and how to verify it.
+
+**Requirements for feature_list.json:**
+
+```json
+[
+  {
+    "id": 1,
+    "feature": "Streamlit dashboard loads at port 8501",
+    "category": "functional",
+    "priority": 1,
+    "passes": false,
+    "testing_steps": [
+      "puppeteer_navigate to http://localhost:8501",
+      "puppeteer_screenshot to verify page loaded",
+      "Check page title or header contains 'PodcastBrain'",
+      "Verify URL input field is visible on the page"
+    ]
+  }
+]
+```
+
+- Exactly **8** features total
+- Include both "functional" and "style" categories
+- Mix narrow (2-5 steps) and comprehensive (8+ steps) tests
+- At least 1 test must have 8+ steps
+- Priority: foundational first (app loads → URL input → download trigger → progress → file saved → error → cancel → style)
+- All start with `"passes": false`
+- Testing via browser automation through puppeteer tools (navigate to http://localhost:8501)
+- Every test starts with puppeteer_navigate; never use puppeteer_connect_active_tab
+- Cover all success criteria from app_spec.txt
+
+**Feature areas to cover (8 total):**
+
+1. App loads at port 8501 with PodcastBrain header visible
+2. URL input field accepts YouTube watch URLs
+3. "Download Audio" button triggers yt-dlp subprocess
+4. Progress bar increments from 0% to 100% during download
+5. Downloaded file appears in ./downloads/ directory after completion
+6. Invalid URL shows user-friendly error message (not a Python traceback)
+7. Cancel button stops download and removes partial file
+8. Style: no layout overflow in standard 1280px window
+
+**Important instructions:**
+Removing or editing features in future sessions is catastrophic.
+Features may only be marked as passing (change "passes": false to "passes": true).
+Never remove features, never edit descriptions, never modify testing steps.
+Future agents rely on the exact content of this file.
+
+---
+
+### Task 2: Create init.sh
+
+Create an executable `init.sh` that bootstraps the project in a fresh Linux environment.
+The script must:
+
+```bash
+#!/bin/bash
+set -e
+
+echo "=== PodcastBrain Init ==="
+
+# 1. Check system dependencies
+command -v ffmpeg >/dev/null 2>&1 || {
+    echo "ffmpeg not found. Installing..."
+    apt-get update -qq && apt-get install -y -qq ffmpeg
+}
+
+# 2. Create Python virtualenv
+python3 -m venv .venv
+
+# 3. Activate and install dependencies
+source .venv/bin/activate
+pip install --upgrade pip --quiet
+pip install -r requirements.txt --quiet
+
+# 4. Create downloads directory
+mkdir -p downloads
+
+# 5. Start Streamlit on port 8501 in background
+nohup streamlit run podcastbrain/app.py --server.port 8501 --server.headless true \
+    --server.fileWatcherType none > streamlit.log 2>&1 &
+
+echo "Streamlit PID: $!"
+echo "Dashboard: http://localhost:8501"
+sleep 3
+echo "init.sh complete"
+```
+
+Also create `requirements.txt` with pinned or minimum versions:
+
+```
+streamlit>=1.35.0
+yt-dlp>=2024.1.0
+ffmpeg-python>=0.2.0
+```
+
+---
+
+### Task 3: Initialize Git
+
+Add and commit all created files:
+
+```bash
+git add feature_list.json init.sh requirements.txt README.md
+git commit -m "Initialize PodcastBrain v1: feature list, init script, requirements"
+```
+
+If README.md does not exist, create a minimal one first:
+
+```markdown
+# PodcastBrain v1 — Audio Downloader
+
+Downloads audio from YouTube URLs and direct audio links using yt-dlp.
+
+## Quick Start
+```bash
+bash init.sh
+# Open http://localhost:8501
+```
+
+## Requirements
+
+- ffmpeg (system package)
+
+## Features
+
+- Download YouTube and direct URL audio via yt-dlp
+- Real-time progress bar during download
+- Cancel button stops download and removes partial file
+- Files saved to ./downloads/ directory
+```
+
+---
+
+### Task 4: Create Project Structure
+
+Create the package directory structure with stub files:
+
+```
+podcastbrain/
+  __init__.py
+  app.py         — Streamlit entry point, URL input, progress bar, download control
+  downloader.py  — yt-dlp subprocess wrapper, progress parsing, cancel support
+```
+
+For each file, at minimum create:
+- A module docstring explaining the purpose
+- Import statements
+- Class/function signatures with docstrings and `pass` body
+- `if __name__ == "__main__":` smoke test block
+
+The goal is for future coding agents to fill in implementations without needing to re-architect.
+
+**Both files should be functional (not just stubs)** if time allows, because the test harness will launch the app.
+Implement at minimum:
+- `downloader.py`: `download_audio(url, output_dir, progress_callback)` using yt-dlp subprocess with regex progress parsing (`r'\[download\]\s+(\d+\.\d+)%'`)
+- `app.py`: URL text_input + "Download Audio" button + progress bar + "Cancel" button + success/error display
+
+---
+
+### Optional: Start Implementation
+
+If time remains after the above four tasks, implement in priority order:
+
+1. **downloader.py** — `download_audio()` with yt-dlp subprocess, progress parsing, and `cancel_download(pid)` using `process.terminate()`
+2. **app.py** — Single-page UI with URL input, progress bar polling via background thread, status display
+
+After implementing each file:
+- Test it (run the module directly or verify in Streamlit browser)
+- Only mark "passes": true in feature_list.json after browser verification
+- Commit before moving to the next file
+
+Create a test audio file if needed:
+```bash
+ffmpeg -f lavfi -i anullsrc=r=44100:cl=mono -t 5 -q:a 9 -acodec libmp3lame /tmp/test.mp3
+```
+
+---
+
+### Ending This Session
+
+Before finishing:
+
+1. **Commit all work** with a descriptive message:
+
+   ```bash
+   git add -A
+   git commit -m "Session 1: v1 scaffold, feature list, downloader + app stubs"
+   ```
+
+2. **Create `claude-progress.txt`** summarizing:
+   - What was completed this session
+   - Current status of each file (stub/partial/complete)
+   - Which feature_list.json items now pass
+   - Any issues encountered (e.g., ffmpeg not installed in test environment)
+   - Suggested next steps for Session 2
+
+3. **Confirm feature_list.json** is valid JSON with exactly **8** entries, all `"passes": false`
+   (only mark true for features you verified via browser)
+
+4. **Confirm init.sh is executable:** `chmod +x init.sh`
+
+5. **Keep the environment clean**: Streamlit running or gracefully stopped, no uncommitted staged audio files, no crashed Python processes
+
+**Remember:** This is Session 1 of multiple. Architecture and correctness quality matter more than implementation speed.
+Future agents will build entirely on the foundation you leave behind.

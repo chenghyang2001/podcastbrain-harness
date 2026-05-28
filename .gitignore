@@ -1,4 +1,5 @@
 generations/
+artifact-download/
 __pycache__/
 *.pyc
 *.log

@@ -54,7 +54,8 @@ for feat in features:
         continue
     # 容忍多種 schema：passed / status / pass 欄位
     is_passed = bool(
-        feat.get("passed")
+        feat.get("passes")
+        or feat.get("passed")
         or feat.get("pass")
         or str(feat.get("status", "")).lower() in ("passed", "pass", "done")
     )

@@ -6,3 +6,8 @@ __pycache__/
 *.lock
 .env
 bash.exe.stackdump
+
+# 大型素材檔（演化版分析來源：影片/語音/PDF，不進 repo）
+prompts/v1-演化版/*.mp4
+prompts/v1-演化版/*.m4a
+prompts/v1-演化版/*.pdf

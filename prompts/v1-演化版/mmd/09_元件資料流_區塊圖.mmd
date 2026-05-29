@@ -1,0 +1,12 @@
+block-beta
+  columns 5
+  App["app.py<br/>UI 與按鈕"] State["session_state<br/>進度與取消旗標"] Dl["downloader.py<br/>下載模組"] Yt["yt-dlp<br/>subprocess"] Ff["ffmpeg<br/>轉 mp3"]
+  space:5
+  File["./downloads<br/>音檔落地"]:5
+  App --> State
+  State --> App
+  App --> Dl
+  Dl --> Yt
+  Yt --> Ff
+  Ff --> File
+  Yt --> Dl

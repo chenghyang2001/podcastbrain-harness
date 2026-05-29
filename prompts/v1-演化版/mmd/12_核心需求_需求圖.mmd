@@ -1,0 +1,42 @@
+requirementDiagram
+    requirement R1 {
+    id: 1
+    text: "即時進度：下載條 0 至 100 雙向顯示"
+    risk: medium
+    verifymethod: test
+    }
+    requirement R2 {
+    id: 2
+    text: "可取消：隨時取消並清乾淨暫存檔"
+    risk: high
+    verifymethod: test
+    }
+    requirement R3 {
+    id: 3
+    text: "可讀錯誤：無效 URL 顯示可讀訊息不崩潰"
+    risk: medium
+    verifymethod: demonstration
+    }
+    requirement R4 {
+    id: 4
+    text: "無硬編碼路徑：下載用相對路徑"
+    risk: low
+    verifymethod: inspection
+    }
+    requirement R5 {
+    id: 5
+    text: "乾淨終止：subprocess 不留殭屍程序"
+    risk: high
+    verifymethod: test
+    }
+    element SYS {
+    type: "PodcastBrain Streamlit 下載器"
+    }
+    element DL {
+    type: "downloader yt-dlp subprocess"
+    }
+    SYS - satisfies -> R1
+    SYS - satisfies -> R3
+    SYS - satisfies -> R4
+    DL - satisfies -> R2
+    DL - satisfies -> R5

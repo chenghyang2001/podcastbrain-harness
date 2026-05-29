@@ -1,0 +1,18 @@
+sequenceDiagram
+    participant U as 使用者
+    participant App as Streamlit app.py
+    participant DL as downloader.py
+    participant YT as yt-dlp subprocess
+    U->>App: 貼上 URL 並按 Download Audio
+    App->>App: 驗證 URL 格式
+    App->>DL: download_audio(url, output_dir)
+    DL->>YT: spawn subprocess 開始下載
+    loop 進度 poll 迴圈
+        YT-->>DL: 輸出 stdout 一行
+        DL->>DL: regex 解析百分比
+        DL-->>App: 回報進度值
+        App-->>U: 更新 st.progress() 0→100%
+    end
+    YT-->>DL: 下載完成 (檔案落地)
+    DL-->>App: 回傳 dict<br/>file_path / title / file_size_mb
+    App-->>U: 顯示路徑與大小

@@ -1,0 +1,14 @@
+block-beta
+  columns 3
+  UI["UI 層<br/>Streamlit 單頁 port 8501"]:3
+  space:3
+  Logic["邏輯層<br/>downloader.py"]:3
+  space:3
+  Y["外部工具<br/>yt-dlp"] F["外部工具<br/>ffmpeg"] space
+  space:3
+  Store["儲存層<br/>./downloads 本機檔案"]:3
+  UI --> Logic
+  Logic --> Y
+  Logic --> F
+  Y --> Store
+  F --> Store

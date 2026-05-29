@@ -1,0 +1,15 @@
+gantt
+    title PodcastBrain v1 實作時程與演化路線
+    dateFormat YYYY-MM-DD
+    section 開發
+        Step1 專案骨架 : a1, 2026-05-30, 1d
+        Step2 yt-dlp 下載模組 : a2, after a1, 2d
+        Step3 Streamlit UI : a3, after a2, 2d
+    section 測試
+        進度條 0 至 100 驗證 : t1, after a3, 1d
+        取消清乾淨驗證 : t2, after t1, 1d
+        無效 URL 錯誤驗證 : t3, after t1, 1d
+    section 演化
+        v2 音訊轉錄 : v2, after t2, 3d
+        v3 AI 摘要分析 : v3, after v2, 3d
+        v4 結果存資料庫 : v4, after v3, 2d

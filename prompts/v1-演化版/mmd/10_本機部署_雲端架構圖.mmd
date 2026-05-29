@@ -1,0 +1,12 @@
+block-beta
+  columns 1
+  block:local:1
+    columns 3
+    Server["Streamlit Server<br/>localhost:8501 單頁"]:3
+    Thread["背景執行緒<br/>poll 進度到 st.progress"] Proc["subprocess<br/>yt-dlp 與 ffmpeg"] FS["本機檔案系統<br/>./downloads"]
+  end
+  space
+  Note["v1 純本機部署 無雲端 無資料庫"]:1
+  Server --> Thread
+  Thread --> Proc
+  Proc --> FS

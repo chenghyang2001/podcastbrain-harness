@@ -1,0 +1,12 @@
+stateDiagram-v2
+    [*] --> idle
+    idle --> downloading: 按下 Download Audio<br/>URL 驗證通過
+    idle --> idle: URL 無效<br/>顯示錯誤
+    downloading --> downloading: 解析進度<br/>更新 st.progress()
+    downloading --> success: yt-dlp 完成<br/>檔案落地 ./downloads/
+    downloading --> error: 網路錯誤 / 私人影片<br/>raise 例外
+    downloading --> cancelled: 按下 Cancel<br/>process.terminate()<br/>刪除部分檔
+    success --> idle: 顯示路徑大小後重置
+    error --> idle: 顯示可讀錯誤後重置
+    cancelled --> idle: UI 重置
+    idle --> [*]

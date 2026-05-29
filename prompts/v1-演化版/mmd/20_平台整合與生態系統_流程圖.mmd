@@ -1,0 +1,26 @@
+flowchart LR
+    Core["PodcastBrain v1<br/>核心下載器"]
+    subgraph 音訊來源
+        Y["YouTube"]
+        D["直連音訊<br/>MP3/M4A/WAV"]
+    end
+    subgraph 下載工具鏈
+        YT["yt-dlp<br/>bestaudio"]
+        FF["ffmpeg<br/>轉 MP3"]
+    end
+    subgraph 介面與儲存
+        ST["Streamlit<br/>:8501 GUI"]
+        FS["本機檔案系統<br/>./downloads/"]
+    end
+    subgraph 未來整合
+        W["Whisper<br/>轉錄 v2"]
+        L["LLM<br/>AI 分析 v3"]
+    end
+    Y --> YT
+    D --> YT
+    ST --> Core
+    Core --> YT
+    YT --> FF
+    FF --> FS
+    FS -.-> W
+    W -.-> L

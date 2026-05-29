@@ -1,0 +1,19 @@
+erDiagram
+    DOWNLOAD_JOB ||--o| AUDIO_FILE : "產生"
+    DOWNLOADS_DIR ||--o{ AUDIO_FILE : "存放"
+    DOWNLOAD_JOB {
+        string url "YouTube 或音訊連結"
+        string status "進行中或完成或取消"
+        float progress "0 到 100 百分比"
+        int process_pid "yt-dlp 程序"
+    }
+    AUDIO_FILE {
+        string file_path "本機路徑"
+        string title "影片或音訊標題"
+        float file_size_mb "檔案大小"
+        string format "mp3 m4a wav"
+    }
+    DOWNLOADS_DIR {
+        string path "Path.cwd 下的 downloads"
+        string note "v1 無資料庫僅檔案系統"
+    }

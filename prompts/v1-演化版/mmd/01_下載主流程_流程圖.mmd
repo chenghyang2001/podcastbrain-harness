@@ -1,0 +1,16 @@
+flowchart TD
+    A["使用者貼上 URL<br/>YouTube 或音訊連結"] --> B["按下 Download Audio"]
+    B --> C{"URL 格式驗證？"}
+    C -->|無效 URL| E1["顯示可讀錯誤<br/>請輸入有效連結"]
+    C -->|有效| D["app.py 啟動背景執行緒<br/>呼叫 download_audio(url, output_dir)"]
+    D --> F["downloader.py 啟動<br/>yt-dlp subprocess"]
+    F --> G["逐行讀取 yt-dlp stdout"]
+    G --> H["regex 解析進度<br/>r'\[download\]\s+(\d+\.\d+)%'"]
+    H --> I["更新 st.progress()<br/>0% → 100%"]
+    I --> J{"下載結果？"}
+    J -->|成功| K["回傳 dict<br/>file_path / title / file_size_mb"]
+    K --> L["顯示檔案路徑與大小<br/>落地於 ./downloads/"]
+    J -->|網路錯誤 / 私人影片| E2["raise 例外<br/>顯示可讀錯誤訊息"]
+    E1 --> Z["回到 idle 等待新輸入"]
+    E2 --> Z
+    L --> Z

@@ -1,0 +1,35 @@
+classDiagram
+    class StreamlitApp {
+        +session_state: SessionState
+        +render_ui()
+        +on_download_click()
+        +on_cancel_click()
+        +poll_progress()
+    }
+    class SessionState {
+        +progress: float
+        +cancel_flag: bool
+        +is_downloading: bool
+        +process_pid: int
+    }
+    class Downloader {
+        +download_audio(url, output_dir) DownloadResult
+        +cancel_download(pid)
+        -parse_progress(line) float
+        -handle_errors()
+    }
+    class DownloadResult {
+        +file_path: str
+        +title: str
+        +file_size_mb: float
+    }
+    class YtDlpProcess {
+        +pid: int
+        +stdout
+        +terminate()
+    }
+    StreamlitApp *-- SessionState : 持有
+    StreamlitApp --> Downloader : 呼叫
+    Downloader ..> YtDlpProcess : 啟動 subprocess
+    Downloader --> DownloadResult : 回傳
+    YtDlpProcess --> DownloadResult : 產出音檔

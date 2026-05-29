@@ -1,0 +1,33 @@
+mindmap
+  root((PodcastBrain v1))
+    功能
+      接受 YouTube URL
+      接受直接音訊連結
+      下載至 ./downloads/
+      即時進度條
+      可取消
+    技術棧
+      Python 3.11+
+      Streamlit 8501 單頁
+      yt-dlp
+      ffmpeg-python
+    模組
+      app.py UI
+      downloader.py
+        download_audio
+        cancel_download
+    流程
+      Step1 專案骨架
+      Step2 yt-dlp 下載模組
+      Step3 Streamlit UI
+    成功標準
+      8501 載入
+      進度 0 至 100
+      檔案落地
+      Cancel 清乾淨
+      錯誤可讀
+    演化規則
+      v1 演化序列首版
+      v2 增量加功能
+      功能永不刪
+      status new modified stable

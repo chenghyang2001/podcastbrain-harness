@@ -11,3 +11,6 @@ bash.exe.stackdump
 prompts/v1-演化版/*.mp4
 prompts/v1-演化版/*.m4a
 prompts/v1-演化版/*.pdf
+
+# Demo app 驗證截圖（純驗證用，不進 repo）
+doc/demo-app-*.png

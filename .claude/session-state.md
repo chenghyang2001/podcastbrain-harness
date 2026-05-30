@@ -1,4 +1,4 @@
-# Session State (saved: 2026-05-29 17:00 / trigger: n/a)
+# Session State (saved: 2026-05-30 09:00 / trigger: )
 
 ## Branch
 master
@@ -8,11 +8,11 @@ master
 
 
 ## Recent Commits (5)
-58d3236 更新 session state
-e99dfbb 新增 prompts/v1-演化版 app_spec v2/v3（演化 demo 用）+ 更新 session state
-51c670d 更新 session state
-8da2e0a 新增 tunnel-8502.bat：SSH 通道（本機 8502→VPS 8502）瀏覽 demo app + 修 timeout 重導向為 Windows >nul
-f672cf3 更新 session state
+9060753 新增 dynamic workflow 演化版 20 種 Mermaid 圖表合輯
+2606f78 新增 dynamic workflow 演化版 JS 永久保存（含一般 vs 演化差異註解）
+6bd9662 新增 workflow vs harness 演化筆記 + workflow 圖像化看懂法（含演化修改章節）
+68aff25 新增 v3 演化三件套 prompt（_v3 命名）+ gitignore 排除 wf-evolution-demo
+a89f696 新增 .gitignore 規則：排除 demo app 驗證截圖 doc/demo-app-*.png
 
 ## Change Summary
  .claude/session-state.md | 19 -------------------

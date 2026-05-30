@@ -1,0 +1,18 @@
+block-beta
+  columns 2
+  block:local:2
+    columns 2
+    CC["Claude Code 本機<br/>跑 Workflow 工具"]:2
+    BG["背景 multi-agent<br/>haiku 平行派遣"] SF["外部 state 檔<br/>feature_list.json + git"]
+  end
+  space:2
+  block:harness:2
+    columns 2
+    VPS["VPS cron<br/>定時觸發 harness"]:2
+    HArn["podcastbrain harness<br/>同三不變量"] HState["狀態外部化<br/>git 留存"]
+  end
+  CC --> BG
+  BG --> SF
+  VPS --> HArn
+  HArn --> HState
+  SF --> HState

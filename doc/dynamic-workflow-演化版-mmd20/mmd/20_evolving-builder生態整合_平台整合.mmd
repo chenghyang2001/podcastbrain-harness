@@ -1,0 +1,21 @@
+flowchart LR
+    Core["evolving-builder<br/>三段phase演化腳本"]
+    subgraph 執行環境["Claude Code 執行環境"]
+        WF["Workflow 工具<br/>parallel 派工"]
+        HA["haiku agent<br/>只對新功能派 builder"]
+    end
+    subgraph 狀態與版控["狀態與版控"]
+        ST["外部 state 檔<br/>locked_stable / appended"]
+        GIT["git<br/>APPEND diff 留痕"]
+    end
+    subgraph 紀律來源["紀律來源（對照）"]
+        HARNESS["podcastbrain harness<br/>三不變量"]
+        CRON["VPS cron<br/>無人值守排程"]
+    end
+    Core --> WF
+    WF --> HA
+    Core -->|讀 Append| ST
+    Core -->|寫回 Persist| ST
+    ST --> GIT
+    HARNESS -.APPEND 紀律.-> Core
+    CRON -.可定時觸發.-> Core

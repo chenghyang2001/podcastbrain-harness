@@ -1,0 +1,18 @@
+block-beta
+  columns 2
+  L["一般 dynamic workflow<br/>無狀態 跑完即忘"] R["演化版 evolving-builder<br/>有狀態 跨run堆疊"]
+  space space
+  L1["Phase Scan<br/>fan-out 掃描"] R1["Phase Append<br/>讀state算APPEND diff"]
+  space space
+  L2["Phase Synthesize<br/>整併收口"] R2["Phase Build<br/>鎖passes:true只攻新"]
+  space space
+  Lend["每次全部重跑<br/>產物不堆疊"] R3["Phase Persist<br/>寫回feature_list.json"]
+  space space
+  space Rend["v1到v2到v3<br/>鎖舊加新堆疊長大"]
+  L --> L1
+  L1 --> L2
+  L2 --> Lend
+  R --> R1
+  R1 --> R2
+  R2 --> R3
+  R3 --> Rend

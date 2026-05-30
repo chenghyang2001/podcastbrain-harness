@@ -1,0 +1,20 @@
+block-beta
+  columns 3
+  RT["Workflow Runtime<br/>Claude Code 內建工具"]:3
+  space:3
+  Sandbox["JS 腳本 sandbox<br/>無 fs IO 全派 agent"]:3
+  space:3
+  Append["Phase Append<br/>讀state算diff"] Build["Phase Build<br/>只建新功能鎖stable"] Persist["Phase Persist<br/>合併寫回state"]
+  space:3
+  AgR["haiku agent<br/>read-state"] AgB["haiku agent<br/>build:新功能"] AgW["haiku agent<br/>write-state"]
+  space:3
+  State["外部 state 檔<br/>feature_list.json"]:3
+  RT --> Sandbox
+  Sandbox --> Append
+  Sandbox --> Build
+  Sandbox --> Persist
+  Append --> AgR
+  Build --> AgB
+  Persist --> AgW
+  AgR --> State
+  AgW --> State

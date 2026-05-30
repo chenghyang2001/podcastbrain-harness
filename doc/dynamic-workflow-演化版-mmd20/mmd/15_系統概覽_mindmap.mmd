@@ -1,0 +1,23 @@
+mindmap
+  root((evolving-builder<br/>演化版 workflow))
+    三 phase
+      Append（讀 state 算 diff）
+      Build（parallel 只建 new）
+      Persist（寫回 state 檔）
+    三 schema
+      STATE_READ_SCHEMA
+      BUILD_SCHEMA
+      PERSIST_SCHEMA
+    三不變量
+      狀態外部化
+      冪等＋APPEND-aware
+      鎖 stable 只攻 new
+    踩坑
+      args 變字串→JSON.parse
+      build agent 雞婆建檔→禁工具
+      name-map 對不上→改 index
+      sandbox 無 fs/Date.now/Math.random
+    vs 一般 workflow
+      一般：無狀態跑完即忘
+      演化：跨 run 堆疊 v1→v2→v3
+      回傳 locked_stable/appended

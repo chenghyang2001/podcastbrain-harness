@@ -1,0 +1,20 @@
+flowchart TD
+    Start["Workflow 啟動<br/>args version v2 statePath spec"] --> Parse{"args 是字串？"}
+    Parse -->|是| JP["JSON.parse 還原<br/>踩坑防禦"]
+    Parse -->|否| Use["直接用 args 物件"]
+    JP --> P1
+    Use --> P1
+    P1["Phase 1 Append<br/>派 haiku agent 用 Read 讀<br/>feature_list.json"] --> Exist{"state 檔存在？"}
+    Exist -->|否| Empty["回 features 空陣列<br/>v1 從零建 2 功能"]
+    Exist -->|是| Calc["算 existingNames<br/>locked passes:true<br/>baseId max id"]
+    Empty --> Diff
+    Calc --> Diff["APPEND diff<br/>只挑 spec 沒涵蓋的功能"]
+    Diff --> HasNew{"有新功能 toAdd？"}
+    HasNew -->|無| Skip["全部已涵蓋<br/>只鎖 stable"]
+    HasNew -->|有| P2["Phase 2 Build<br/>parallel 只對新功能派 builder<br/>禁 Read/Write/Bash 工具"]
+    P2 --> Lock["鎖住 passes:true 的 stable<br/>用 index 對應不靠 name"]
+    Lock --> Merge["合併 舊標 stable<br/>新標 new + version_added"]
+    Skip --> Merge
+    Merge --> P3["Phase 3 Persist<br/>派 agent 寫回 state 檔<br/>跨 run 留存"]
+    P3 --> Ret["回傳 locked_stable<br/>appended_this_run<br/>appended_names"]
+    Ret --> End["結束<br/>v2 鎖 2 stable + APPEND 1 個 Q&A"]

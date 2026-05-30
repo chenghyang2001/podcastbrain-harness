@@ -1,0 +1,39 @@
+requirementDiagram
+    requirement R1 {
+        id: 1
+        text: "狀態外部化：讀寫 feature_list.json 跨 run 留存"
+        risk: high
+        verifymethod: test
+    }
+    requirement R2 {
+        id: 2
+        text: "APPEND-aware：只挑 spec 裡 state 沒涵蓋的功能"
+        risk: medium
+        verifymethod: test
+    }
+    requirement R3 {
+        id: 3
+        text: "鎖 stable：passes:true 的功能完全不重建"
+        risk: medium
+        verifymethod: inspection
+    }
+    requirement R4 {
+        id: 4
+        text: "只攻 new：parallel 只對新功能派 builder"
+        risk: low
+        verifymethod: demonstration
+    }
+    element PHASE_APPEND {
+        type: "Phase Append（派 haiku 讀 state 算 diff）"
+    }
+    element PHASE_BUILD {
+        type: "Phase Build（parallel 只建 new，index 對應）"
+    }
+    element PHASE_PERSIST {
+        type: "Phase Persist（agent 寫回 state 檔）"
+    }
+    PHASE_PERSIST - satisfies -> R1
+    PHASE_APPEND - satisfies -> R1
+    PHASE_APPEND - satisfies -> R2
+    PHASE_APPEND - satisfies -> R3
+    PHASE_BUILD - satisfies -> R4

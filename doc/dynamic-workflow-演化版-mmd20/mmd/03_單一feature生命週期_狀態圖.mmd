@@ -1,0 +1,13 @@
+stateDiagram-v2
+    [*] --> 不存在: state 檔尚無此功能
+    不存在 --> New: APPEND diff 挑中<br/>spec 有 state 沒涵蓋
+    New --> Building: Phase Build 派 builder
+    Building --> Stable: passes true<br/>標 status stable 鎖定
+    Building --> 失敗: passes false<br/>保持 false 待 re-run
+    Stable --> Stable: 後續 run 鎖住<br/>不重建 用 index 對應
+    失敗 --> Building: 下一代重跑<br/>re-run 再攻
+    Stable --> [*]: 寫回 state 跨 run 留存
+    note right of Stable
+        v1 建 2 個 stable
+        v2 鎖這 2 個只 APPEND 1
+    end note

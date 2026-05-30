@@ -1,0 +1,25 @@
+erDiagram
+    STATE_FILE ||--o{ FEATURE : "features陣列含多筆"
+    FEATURE ||--o| BUILD_RESULT : "新功能派builder產出"
+    VERSION ||--o{ FEATURE : "version_added標記哪代加入"
+    STATE_FILE {
+        string path "feature_list.json"
+        array features "功能清單"
+    }
+    FEATURE {
+        number id "遞增主鍵baseId加序"
+        string name "功能名稱對應key"
+        boolean passes "true則鎖stable"
+        string status "stable或new"
+        string version_added "v1或v2"
+        string note "實作摘要"
+    }
+    BUILD_RESULT {
+        string name "回傳功能名"
+        boolean passes "建置是否通過"
+        string note "一句中文摘要"
+    }
+    VERSION {
+        string tag "v1或v2或v3"
+        number appended_this_run "本run新增數"
+    }

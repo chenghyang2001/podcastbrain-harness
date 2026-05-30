@@ -1,0 +1,18 @@
+journey
+    title 開發者跑一代 v2 演化 workflow 的體驗
+    section 準備 args
+        寫 v2 功能清單 spec: 4: 開發者
+        指定 statePath 指向 v1 state 檔: 4: 開發者
+        確認 version 標 v2: 5: 開發者
+    section 啟動跑
+        呼叫 Workflow 工具: 5: 開發者
+        Runtime 自背景派 agent: 3: Runtime
+        等 3 個 agent 跑完 34s: 4: 開發者, Runtime
+    section 看 locked appended
+        看 locked_stable 等於 2: 5: 開發者
+        看 appended_this_run 等於 1: 5: 開發者
+        看 appended_names 是 Q&A: 4: 開發者
+    section 驗證
+        Read feature_list.json 確認堆疊: 5: 開發者
+        確認舊 stable 沒被重建: 5: 開發者
+        準備下一代 v3 APPEND: 4: 開發者

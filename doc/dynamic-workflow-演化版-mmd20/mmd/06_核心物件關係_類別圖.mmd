@@ -1,0 +1,41 @@
+classDiagram
+    class Workflow {
+        +meta: 中繼資料
+        +phases: Append/Build/Persist
+        +args: version/statePath/spec
+        +run() 跨run演化堆疊
+    }
+    class Feature {
+        +id: number
+        +name: string
+        +passes: boolean
+        +status: stable或new
+        +version_added: string
+        +note: string
+    }
+    class STATE_READ_SCHEMA {
+        +features: Feature陣列
+        +讀feature_list.json用
+    }
+    class BUILD_SCHEMA {
+        +name: string
+        +passes: boolean
+        +note: string
+    }
+    class PERSIST_SCHEMA {
+        +written: boolean
+        +count: number
+    }
+    class Agent {
+        +label: string
+        +model: haiku
+        +schema: JSON結構
+        +只回結構化結果
+    }
+    Workflow *-- Feature : 編排管理
+    Workflow --> Agent : 派遣執行IO
+    Agent --> STATE_READ_SCHEMA : Append階段約束
+    Agent --> BUILD_SCHEMA : Build階段約束
+    Agent --> PERSIST_SCHEMA : Persist階段約束
+    STATE_READ_SCHEMA o-- Feature : 含features陣列
+    BUILD_SCHEMA --> Feature : 產出合併為new

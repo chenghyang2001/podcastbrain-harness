@@ -1,0 +1,23 @@
+gitGraph
+    commit id: "空 state 檔"
+    commit id: "v1 啟動 4 agent 497k"
+    branch v1-build
+    checkout v1-build
+    commit id: "建功能A passes"
+    commit id: "建功能B passes"
+    checkout main
+    merge v1-build id: "v1 寫回 2 stable"
+    commit id: "v2 讀 v1 state 3 agent 362k"
+    branch v2-append
+    checkout v2-append
+    commit id: "鎖 2 stable 不重建"
+    commit id: "APPEND 1 個 QandA"
+    checkout main
+    merge v2-append id: "v2 寫回 共 3 功能"
+    commit id: "v3 讀 v2 state"
+    branch v3-append
+    checkout v3-append
+    commit id: "鎖 3 stable"
+    commit id: "APPEND 新功能"
+    checkout main
+    merge v3-append id: "v3 堆疊長大"

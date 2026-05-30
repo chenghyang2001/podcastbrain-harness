@@ -1,0 +1,14 @@
+gantt
+    title evolving-builder 三支 run 演化時程（2026-05-30）
+    dateFormat HH:mm
+    axisFormat %H:%M
+    section v1 init 空 state
+        Append 讀空 state            :a1, 04:01, 1m
+        Build 建 2 功能 4 agent       :a2, after a1, 1m
+        Persist 寫回 497k token 171s  :a3, after a2, 1m
+    section v2 append 讀 v1 state
+        Append 鎖 2 stable            :b1, 04:02, 1m
+        Build APPEND 1 個 Q&A 3 agent :b2, after b1, 1m
+        最終版 04-08 362k token 34s   :milestone, m1, 04:08, 0m
+    section 未來 v3
+        讀 v2 state 鎖 3 stable APPEND new :c1, 04:09, 2m

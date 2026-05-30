@@ -1,0 +1,23 @@
+sequenceDiagram
+    participant RT as Workflow Runtime
+    participant JS as 演化腳本
+    participant RA as read-state agent
+    participant BA as build agent
+    participant WA as write-state agent
+    RT->>JS: 啟動 args v2 statePath spec
+    Note over JS: args 字串先 JSON.parse
+    JS->>JS: Phase Append 開始
+    JS->>RA: 派 haiku 用 Read 讀 feature_list.json
+    RA-->>JS: 回 features JSON（v1 留下 2 個）
+    Note over JS: 算 existingNames locked baseId<br/>APPEND diff 出 1 個新 Q&A
+    JS->>JS: Phase Build 開始
+    par 只對新功能派 builder
+        JS->>BA: 建 Q&A 功能 禁工具
+        BA-->>JS: name passes:true note
+    end
+    Note over JS: 鎖 2 個 stable<br/>用 index 合併新舊
+    JS->>JS: Phase Persist 開始
+    JS->>WA: 把 merged JSON 覆寫回 state 檔
+    WA-->>JS: written:true count 3
+    JS-->>RT: 回 locked_stable 2 appended 1
+    Note over RT: v2 共 3 agent 362k token 34s

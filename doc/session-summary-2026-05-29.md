@@ -67,3 +67,57 @@
 - `.claude/session-state.md` 是 harness 自動維護檔，每次互動會變動，刻意不納入功能 commit。
 - 演化版的迴歸保護是「輕量檢查」設計（非自動 revert），若未來要升級成完整 Regression Protection 需另外改 `coding_prompt`。
 - 素材檔（mp4/m4a/pdf）只在本機 `prompts/v1-演化版/`，已被 gitignore，不在 repo。
+
+---
+
+# Session 2（同日下午）— VPS Demo + v1→v2 演化實戰
+
+> 上午設計了演化版 prompt（尚未實跑驗證）；本 session 把它**部署到 VPS 實際跑**，端對端驗證了「v1 生成 → v2 演化」整條鏈，並補了一套進度監看/瀏覽工具。
+
+## 完成事項
+
+### 1. 把 harness 部署到 VPS 並跑出 v1（8/8）
+- VPS 新資料夾 `/home/claude/podcastbrain-demo/`，放 driver（`autonomous_cli_loop.sh`）、parser（`scripts/parse_claude_stream.py`）、3 個 v1-演化版 prompt（置於 `prompts/v1/`，因 VERSION 參數只允許英數，中文「v1-演化版」會被擋）。
+- **port 隔離**：正式版 podcastbrain 佔用 8501，demo 全程 patch 成 **8502**，互不干擾。
+- 跑 `autonomous_cli_loop.sh podcastbrain_demo 6 8 v1` → initializer（CREATE MODE）scaffold + 2 個 coding session 建完 → **v1 8/8 全通過**（streamlit 8502 UP）。
+
+### 2. v1 → v2 演化（APPEND MODE，16/16 全通過）
+完整「如何基於 v1 foundation 建 v2」步驟（已實證）：
+1. 複製 `app_spec_v2.txt` → VPS（port patch 8502）
+2. swap 專案 `app_spec.txt` 成 v2 內容（`feature_list.json` 保留）
+3. **手動跑 APPEND initializer**（關鍵：loop 偵測 `feature_list.json` 已存在會「跳過」initializer，演化必須手動觸發這步）→ feature_list 8→16（v1 鎖 stable、v2 #9-16 append 為 new）
+4. API key 放專案 `.env`（不 export → 驅動 harness 的 claude CLI 仍走免費 Max）
+5. coding prompt append v2 指引（dotenv 讀 key / whisper tiny + 19 秒短片 / 裝依賴 / port 8502）
+6. 讓 loop 來源 spec = v2（`cp app_spec_v2.txt app_spec_v1.txt`，避免重跑覆蓋回 v1），跑 coding 迴圈
+→ **1 個 coding session 建完 8 個 v2 功能，16/16 全通過**；紅綠燈護欄守住 v1 #1-8 未被破壞。
+- v2 app 實裝：SQLite 持久化、本地 Whisper 轉錄、Claude 章節偵測、sidebar nav（Process New/My Episodes）、檔案上傳、Transcript/Chapters 雙 tab、My Episodes 列表。
+- 截圖驗證 v2 UI 全到位（透過 SSH local forward 8502 在本機瀏覽器確認）。
+
+### 3. 產出的 helper 工具（已入庫 podcastbrain-harness）
+- `watch-demo.bat` — 串流監看（`ssh + tail -f loop.log`，append 不清屏 + 斷線重連）
+- `progress.sh` — VPS 端一次性快照儀表板（feature 通過數/git/log/進程/streamlit 狀態）
+- `tunnel-8502.bat` — SSH local forward（本機 8502→VPS 8502）讓瀏覽器看 demo app
+
+## 踩坑與修復（3 個跨平台 + 2 個 QA 盲點）
+- **CRLF/LF 行尾方向相反**：Windows repo 的 `.sh` 帶 CRLF 在 Linux bash 炸（`set: pipefail: invalid option`）→ VPS 端轉 LF；`.bat` 帶 LF 在 Windows goto 可能失效 → 轉 CRLF。同一 repo 跨 Win↔Linux 同步，行尾需求相反。
+- **VERSION 含中文被正規表達式擋** → demo 用 `v1` 標籤夾、內容是 v1-演化版。
+- **progress.sh 計數 bug**：parser 漏判真實 key `"passes"`（只猜了 passed/pass/status）→ 全通過時誤印 0/8。QA 盲點：首次 QA 在「0 通過」狀態驗，一個「永遠回傳 0」的壞 parser 剛好吻合預期值假性 PASS（**測試 oracle 巧合**）。修法是在真實 8/8 狀態回歸驗證。
+- **tunnel-8502.bat 用 `>/dev/null`（Unix）而非 `>nul`（Windows cmd）**。QA 盲點：動態測試在 git bash/Linux 跑，沒在 cmd.exe 實際執行那行 → **測試環境≠目標執行環境**。
+- **pgrep/pkill `-f` pattern 自我匹配**：SSH 遠端 shell 的 cmdline 含 pattern 字串 → 匹配到自己 → kill 殺掉 SSH（exit 255）。「仍有殘留」是假陽性。
+
+## 關鍵事實（給接續 session）
+- VPS demo：`/home/claude/podcastbrain-demo/`；專案 `generations/podcastbrain_demo/`（獨立 git repo）
+- port：8501=正式版（勿動）、8502=demo
+- API key：在 `generations/podcastbrain_demo/.env`（已 gitignore，權限 600），app 用 `load_dotenv` 讀，claude CLI 環境無此 key（維持 Max）
+- 監看：`bash /home/claude/podcastbrain-demo/progress.sh` 或本機 `watch-demo.bat`
+- 成本：claude CLI 全程走 Max（$0），唯一 API credits 是 v2 章節偵測幾次呼叫（約幾分錢）
+
+## 下一步（明天接續）— 演化到 v3
+`app_spec_v3.txt` 已在 VPS（`prompts/v1/app_spec_v3.txt`，需先 port patch 8502）。依今日 v2 同一手法：
+1. `cp prompts/v1/app_spec_v3.txt → app_spec_v3.txt` 並 `sed 8501→8502`
+2. swap 專案 `app_spec.txt` 成 v3
+3. 手動跑 APPEND initializer → feature_list 16→更多（v1+v2 鎖 stable、v3 append）
+4. 視 v3 spec 補 coding prompt 指引（新依賴/新 env）
+5. `cp app_spec_v3.txt app_spec_v1.txt`（loop 來源=v3），跑 coding 迴圈
+6. watch-demo.bat 看進度，跑完截圖驗證
+（先讀 `app_spec_v3.txt` 確認 v3 新增什麼功能、需不需要額外 API/依賴/env。）

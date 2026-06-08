@@ -85,3 +85,36 @@ Coding Agent → 正確識別「綠區 = 0，待 v2 spec」，未動任何程式
 - **EXISTING CODEBASE MODE**：spec 中加 `⚠️ EXISTING CODEBASE MODE` 提示，Initializer 的任務從「開發」變「審計」
 - **headless GUI 驗證**：tkinter 在 headless 環境無法開視窗，用 `grep + py_compile + 純函式 import` 替代 Puppeteer
 - **Coding Agent 正確停下來**：全部 stable 時，Agent 不亂動現有程式碼，等待 v2 spec，這是演化模式的核心紀律
+
+---
+
+## 產出檔案
+
+| 檔案 | repo | commit |
+|------|------|--------|
+| `twilio/app_spec.txt` | twilio | `bb96ba7` |
+| `twilio/prompts/v1-現有功能/app_spec_v1.txt` | twilio | `bb96ba7` |
+| `twilio/prompts/v1-現有功能/initializer_prompt_v1.md` | twilio | `bb96ba7` |
+| `twilio/prompts/v1-現有功能/coding_prompt_v1.md` | twilio | `bb96ba7` |
+| `twilio/feature_list.json` | twilio | `5a56995` |
+| `twilio/claude-progress.txt` | twilio | `5a56995` |
+| `twilio/summary-02-sessions/2026-06-09/session8-summary.md` | twilio | `00379aa` |
+| `doc/session-summary-2026-06-09.md` | podcastbrain-harness | `2413296` |
+| `memory/project-twilio-harness.md` | ~/.claude | 本次收工 |
+
+---
+
+## HANDOFF（下次 session 優先處理）
+
+### 立即行動
+- [ ] 建立 `twilio/prompts/v2-下一版/app_spec_v2.txt`，加入 Feature 7（SIP Trunk 台灣 +886）和 Feature 8（ElevenLabs KB PDF 上傳）
+- [ ] 中華電信 SIP Trunk 審核確認後，執行 ElevenLabs Dashboard → Phone Numbers → Add SIP Trunk
+
+### 進行中（需接續）
+- **SIP Trunk 申請**：2026-06-08 已申請中華電信企業 SIP Trunk，等待審核（無確定日期）。取得後需換掉美國號 `+17073907389`，更新 `ELEVENLABS_PHONE_NUMBER_ID` 環境變數。
+- **twilio 演化版哈內斯**：v1 已完整建立（6/6 stable），v2 spec 尚未建立，Coding Agent 目前無工作目標。
+
+### 注意事項
+- twilio 的驗證方式與 podcastbrain 不同（無 Puppeteer），下次寫 v2 coding_prompt 要沿用 `py_compile + grep + CLI dry-run` 的驗證模式
+- `data/*.xlsx` 含個資，任何 twilio 的 git 操作前確認未 stage data/ 目錄
+- SIP Trunk 取得後記得同步更新 `twilio/CLAUDE.md` 的「電信基建 ID」區塊

@@ -17,3 +17,6 @@ doc/demo-app-*.png
 
 # Workflow 演化 demo 暫存（純示範產物，不進 repo）
 doc/wf-evolution-demo/
+
+# 機器生成的 session 快照（每輪對話自動刷新，不進版本控制）
+.claude/session-state.md
